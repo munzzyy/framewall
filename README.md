@@ -107,6 +107,14 @@ lose the ability to notice something's there. The report says plainly which
 mode ran (`OCR: used` or `OCR: skipped (...)`), and `--json` carries
 `ocr_used` / `ocr_skipped_reason` for scripts that need to know.
 
+framewall checks that tesseract can actually read text, not just that the
+binary is on PATH. A tesseract install with no language data runs fine and
+returns nothing, which would make every image look clean; when that happens
+the report says `OCR: skipped (tesseract is installed but read no text...)`
+rather than passing the image silently, so a clean verdict never hides a
+detector that failed to run. Fix it with `apt install tesseract-ocr-eng`
+(or the equivalent language pack) and re-scan.
+
 ### In CI
 
 ```yaml

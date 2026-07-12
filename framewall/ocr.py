@@ -15,15 +15,42 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Optional
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 DEFAULT_TIMEOUT = 20  # seconds, per OCR pass
 
 
 def tesseract_path() -> Optional[str]:
     return shutil.which("tesseract")
+
+
+@lru_cache(maxsize=1)
+def ocr_functional() -> bool:
+    """Whether tesseract can actually read text right now, not just whether the
+    binary is on PATH. A tesseract install missing its language data or the tsv
+    config runs fine and returns nothing, which for a detector would look like a
+    clean image. Render one known word and confirm it comes back."""
+    tess_bin = tesseract_path()
+    if tess_bin is None:
+        return False
+    probe = Image.new("RGB", (240, 80), "white")
+    ImageDraw.Draw(probe).text((12, 24), "framewall", fill="black")
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as fh:
+        probe_path = fh.name
+    try:
+        probe.save(probe_path)
+        out = _run_tsv(tess_bin, probe_path, timeout=DEFAULT_TIMEOUT)
+    except (subprocess.SubprocessError, OSError):
+        return False
+    finally:
+        try:
+            os.unlink(probe_path)
+        except OSError:
+            pass
+    return any(row.split("\t")[-1].strip() for row in out.splitlines()[1:])
 
 
 @dataclass(frozen=True)
