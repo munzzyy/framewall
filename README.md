@@ -181,6 +181,13 @@ finding) - the worst finding decides, full stop.
   though it's exactly the kind of thing an attacker would want to hide.
   The heuristic fallback (`--no-ocr`) trades precision for not needing OCR
   at all, and is the noisiest of the five checks by design.
+- **Some hiding techniques slip past every check.** The detectors are tuned
+  for text an agent reads straight on: low contrast, tiny size, a fake system
+  box, metadata. Text rotated well off-axis, painted into a nearly-transparent
+  alpha layer, or broken up by high-frequency noise can defeat the shape
+  heuristics and read poorly under OCR, so framewall can miss it. It raises the
+  cost of hiding a payload; it doesn't make hiding one impossible. A clean scan
+  is one layer, not a guarantee.
 - **This is a scanner, not a sandbox.** It reads pixels and metadata; it
   never executes anything, and it does nothing to stop an agent from acting
   on text it already saw before framewall ran. The right place for this is
