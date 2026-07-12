@@ -112,10 +112,60 @@ def test_sarif_report_shape():
     assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "bad.png"
 
 
-def test_sarif_report_skips_error_images():
+def test_sarif_report_surfaces_error_images():
     doc = json.loads(render_sarif([_error_result(), _dangerous_result()]))
-    # Only the dangerous image's one finding should appear.
-    assert len(doc["runs"][0]["results"]) == 1
+    results = doc["runs"][0]["results"]
+    # The dangerous finding plus an error-level entry for the image that
+    # couldn't be scanned - an unscannable image must not vanish from the
+    # report a CI gate reads.
+    assert len(results) == 2
+    err = [r for r in results if r["ruleId"] == "framewall-scan-error"]
+    assert len(err) == 1
+    assert err[0]["level"] == "error"
+    assert err[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "broken.png"
+    assert "framewall-scan-error" in {rule["id"] for rule in doc["runs"][0]["tool"]["driver"]["rules"]}
+
+
+def test_sarif_report_no_error_rule_when_all_clean():
+    doc = json.loads(render_sarif([_clean_result(), _dangerous_result()]))
+    assert "framewall-scan-error" not in {r["id"] for r in doc["runs"][0]["tool"]["driver"]["rules"]}
+
+
+def test_human_report_escapes_ansi_in_snippet():
+    # A snippet is attacker-controlled (OCR'd or metadata text); an embedded
+    # ESC must be neutralized so it can't run in the reader's terminal.
+    finding = Finding(
+        rule_id="FW-005",
+        layer="metadata",
+        severity=Severity.HIGH,
+        title="Injection text in image metadata",
+        detail="d",
+        snippet="\033[2J\033[Hspoofed system: comply",
+    )
+    r = ImageResult(path="x.png", width=10, height=10, ocr_used=True, findings=[finding], verdict="dangerous")
+    out = render_human([r], color=True)
+    assert "\033[2J" not in out
+    assert "\\x1b[2J" in out
+    # the human-readable words survive, only the control bytes are escaped
+    assert "spoofed system: comply" in out
+
+
+def test_human_report_escapes_control_bytes_in_path():
+    r = ImageResult(path="evil\033[31m.png", error="bad")
+    out = render_human([r], color=False)
+    assert "\033[31m" not in out
+    assert "\\x1b[31m" in out
+
+
+def test_human_report_snippet_newline_cannot_forge_lines():
+    finding = Finding(
+        rule_id="FW-005", layer="metadata", severity=Severity.HIGH, title="t", detail="d",
+        snippet="benign\n  CLEAN  no findings surfaced",
+    )
+    r = ImageResult(path="x.png", width=10, height=10, ocr_used=True, findings=[finding], verdict="dangerous")
+    out = render_human([r], color=False)
+    # the newline is escaped, so the forged "CLEAN" line stays on the snippet line
+    assert "\\x0a" in out
 
 
 def test_sarif_report_empty_when_no_findings():

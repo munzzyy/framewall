@@ -62,15 +62,66 @@ def test_ocr_image_without_tesseract_on_path_returns_empty(monkeypatch):
     assert lines == []
 
 
-@requires_tesseract
-def test_ocr_image_survives_a_timeout(monkeypatch):
+def test_ocr_image_raises_on_timeout(monkeypatch):
+    # A hung tesseract must surface, not be swallowed into an empty "no text"
+    # result that a caller would read as a clean image. Self-contained: the
+    # binary is faked, so this runs even where tesseract can't read.
+    monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: "/usr/bin/tesseract")
+
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd="tesseract", timeout=1)
 
     monkeypatch.setattr(ocr_mod.subprocess, "run", fake_run)
-    words, lines = ocr_mod.ocr_image(clean_screenshot())
-    assert words == []
-    assert lines == []
+    with pytest.raises(ocr_mod.OcrTimeout):
+        ocr_mod.ocr_image(clean_screenshot())
+
+
+def test_ocr_region_swallows_timeout(monkeypatch):
+    # A region pass timing out is non-fatal - the primary pass already ran -
+    # so ocr_region returns no words rather than aborting the scan.
+    monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: "/usr/bin/tesseract")
+
+    def boom(*args, **kwargs):
+        raise ocr_mod.OcrTimeout("timed out")
+
+    monkeypatch.setattr(ocr_mod, "ocr_image", boom)
+    assert ocr_mod.ocr_region(clean_screenshot(), (0, 0, 100, 40)) == []
+
+
+def test_ocr_region_caps_the_upscale_buffer(monkeypatch):
+    # A large flagged region must not be blown up past the buffer cap: the
+    # image handed to the OCR pass stays within MAX_UPSCALED_PIXELS.
+    monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: "/usr/bin/tesseract")
+    seen = {}
+
+    def capture(image, timeout=ocr_mod.DEFAULT_TIMEOUT):
+        seen["pixels"] = image.width * image.height
+        return [], []
+
+    monkeypatch.setattr(ocr_mod, "ocr_image", capture)
+    big = clean_screenshot().resize((3000, 2000))
+    ocr_mod.ocr_region(big, (0, 0, 3000, 2000), upscale=3)
+    assert seen["pixels"] <= ocr_mod.MAX_UPSCALED_PIXELS
+
+
+def test_injection_text_preserves_line_anchors(monkeypatch):
+    # A "system:" header on its own line (not the first) must still match the
+    # ^-anchored fake-system-role pattern. That only works if the scanned text
+    # keeps tesseract's line breaks instead of collapsing every word onto one
+    # line. Synthetic OCR output, so this runs without a real tesseract.
+    words = [
+        ocr_mod.Word("Welcome", 0, 0, 60, 10, 90.0),
+        ocr_mod.Word("System:", 0, 20, 60, 10, 90.0),
+        ocr_mod.Word("do", 65, 20, 20, 10, 90.0),
+        ocr_mod.Word("this", 90, 20, 25, 10, 90.0),
+    ]
+    lines = [
+        ocr_mod.Line("Welcome", 0, 0, 60, 10),
+        ocr_mod.Line("System: do this", 0, 20, 115, 10),
+    ]
+    monkeypatch.setattr(ocr_mod, "ocr_image", lambda *a, **k: (words, lines))
+    findings, _w, _l = injection_text.find(object())
+    assert any(f.title == "Fake system-role label" for f in findings)
 
 
 @requires_tesseract

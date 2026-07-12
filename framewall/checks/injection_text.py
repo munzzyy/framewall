@@ -26,11 +26,25 @@ def find(image, low_contrast_regions=None, timeout=None):
     words, lines = ocr_mod.ocr_image(image, **kwargs)
     words = list(words)
 
+    # Keep tesseract's line grouping in the text we scan. Several patterns
+    # anchor to the start of a line (a "system:" header, "new instructions:")
+    # with re.MULTILINE; joining every word into one space-separated blob
+    # collapses the whole screenshot onto a single line, so a header sitting
+    # anywhere but the very top could never match. Reconstruct line breaks from
+    # the line boxes, and fall back to the flat join only if tesseract gave us
+    # words but no line structure.
+    segments = [ln.text for ln in lines] if lines else [" ".join(w.text for w in words)]
+
     for region in low_contrast_regions or []:
         box = (region.left, region.top, region.left + region.width, region.top + region.height)
-        words.extend(ocr_mod.ocr_region(image, box, **kwargs))
+        region_words = ocr_mod.ocr_region(image, box, **kwargs)
+        words.extend(region_words)
+        if region_words:
+            # A locally-boosted region is its own recovered line: give it its
+            # own line so a header hidden at low contrast anchors too.
+            segments.append(" ".join(w.text for w in region_words))
 
-    full_text = " ".join(w.text for w in words)
+    full_text = "\n".join(segments)
     findings = []
     for title, detail, _span, matched in patterns.scan_text(full_text):
         findings.append(

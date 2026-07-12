@@ -82,3 +82,17 @@ def test_non_image_extension_in_directory_is_skipped(tmp_path):
     (tmp_path / "readme.md").write_text("hi", encoding="utf-8")
     paths, _ = resolve([str(tmp_path)])
     assert len(paths) == 1
+
+
+def test_directory_matches_uppercase_extensions(tmp_path):
+    # On a case-sensitive filesystem a per-extension "*.png" glob skips a file
+    # named "payload.PNG"; a security scan of a directory must still find it.
+    _make(tmp_path, "shot.png")
+    clean_screenshot().save(tmp_path / "payload.PNG")
+    (tmp_path / "sub").mkdir(parents=True, exist_ok=True)
+    clean_screenshot().save(tmp_path / "sub" / "hidden.JPEG")
+    paths, _ = resolve([str(tmp_path)])
+    names = {p.name for p in paths}
+    assert "payload.PNG" in names
+    assert "hidden.JPEG" in names
+    assert len(paths) == 3

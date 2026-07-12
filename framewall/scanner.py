@@ -32,13 +32,24 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None) -> ImageResult:
     findings.extend(metadata.find(image))
 
     if use_ocr and ocr_mod.ocr_functional():
-        result.ocr_used = True
-        low_contrast_regions = [f.region for f in low_contrast_findings if f.region]
-        inj_findings, _words, lines = injection_text.find(
-            image, low_contrast_regions=low_contrast_regions, timeout=ocr_timeout
-        )
-        findings.extend(inj_findings)
-        findings.extend(tiny_text.find_from_lines(lines, image.size))
+        try:
+            low_contrast_regions = [f.region for f in low_contrast_findings if f.region]
+            inj_findings, _words, lines = injection_text.find(
+                image, low_contrast_regions=low_contrast_regions, timeout=ocr_timeout
+            )
+        except ocr_mod.OcrTimeout as e:
+            # OCR hung on this image. Don't claim a completed OCR pass we didn't
+            # actually finish: degrade to the heuristic fallback and say why,
+            # the same way a missing tesseract does.
+            result.ocr_used = False
+            result.ocr_skipped_reason = (
+                f"tesseract timed out on this image ({e}); the injection-text check did not run"
+            )
+            findings.extend(tiny_text.find_heuristic(gray))
+        else:
+            result.ocr_used = True
+            findings.extend(inj_findings)
+            findings.extend(tiny_text.find_from_lines(lines, image.size))
     else:
         result.ocr_used = False
         if not use_ocr:

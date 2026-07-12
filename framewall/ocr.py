@@ -22,6 +22,18 @@ from PIL import Image, ImageDraw, ImageOps
 
 DEFAULT_TIMEOUT = 20  # seconds, per OCR pass
 
+# Cap the buffer a region OCR pass may allocate. A low-contrast region can be
+# most of the page, and upscaling it 3x is a 9x area blow-up; without a bound a
+# ~36-megapixel region would ask Pillow to LANCZOS-resize a 300+ megapixel
+# image. Shrink the upscale factor to keep the resized buffer under this.
+MAX_UPSCALED_PIXELS = 8_000_000
+
+
+class OcrTimeout(Exception):
+    """tesseract exceeded its per-pass timeout on a specific image. Raised
+    rather than swallowed so the scanner can report the image as not fully
+    scanned instead of silently treating a hung OCR pass as 'no text found'."""
+
 
 def tesseract_path() -> Optional[str]:
     return shutil.which("tesseract")
@@ -156,9 +168,11 @@ def _flush_line(current_line: dict, lines: list) -> None:
 
 def ocr_image(image: Image.Image, timeout: int = DEFAULT_TIMEOUT):
     """Run tesseract on a full Pillow image. Returns (words, lines); both are
-    empty if tesseract is missing, times out, or fails to run - callers that
-    need to tell "no text" apart from "OCR unavailable" should check
-    tesseract_path() themselves first."""
+    empty if tesseract is missing or fails to run - callers that need to tell
+    "no text" apart from "OCR unavailable" should check tesseract_path()
+    themselves first. Raises OcrTimeout if tesseract exceeds `timeout` on this
+    image, so a hung pass surfaces as an incomplete scan rather than a clean
+    one."""
     tess_bin = tesseract_path()
     if tess_bin is None:
         return [], []
@@ -168,7 +182,9 @@ def ocr_image(image: Image.Image, timeout: int = DEFAULT_TIMEOUT):
         image.save(tmp_path, format="PNG")
         output = _run_tsv(tess_bin, tmp_path, timeout)
         return _parse_tsv(output)
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired as e:
+        raise OcrTimeout(f"tesseract exceeded {timeout}s on this image") from e
+    except OSError:
         return [], []
     finally:
         try:
@@ -197,20 +213,28 @@ def ocr_region(image: Image.Image, box, timeout: int = DEFAULT_TIMEOUT, upscale:
         return []
     crop = image.convert("L").crop((left, top, right, bottom))
     boosted = ImageOps.autocontrast(crop, cutoff=0)
-    if upscale > 1:
-        boosted = boosted.resize(
-            (boosted.width * upscale, boosted.height * upscale), Image.LANCZOS
-        )
-    words, _lines = ocr_image(boosted, timeout=timeout)
+    # Shrink the upscale factor until the resized buffer fits the cap, so a
+    # huge flagged region can't drive a runaway LANCZOS allocation.
+    factor = upscale
+    while factor > 1 and crop.width * crop.height * factor * factor > MAX_UPSCALED_PIXELS:
+        factor -= 1
+    if factor > 1:
+        boosted = boosted.resize((crop.width * factor, crop.height * factor), Image.LANCZOS)
+    # A region timing out shouldn't abort the whole scan - the primary pass
+    # already ran. Treat it as no recovered words for this region.
+    try:
+        words, _lines = ocr_image(boosted, timeout=timeout)
+    except OcrTimeout:
+        return []
     mapped = []
     for w in words:
         mapped.append(
             Word(
                 text=w.text,
-                left=left + w.left // upscale,
-                top=top + w.top // upscale,
-                width=max(1, w.width // upscale),
-                height=max(1, w.height // upscale),
+                left=left + w.left // factor,
+                top=top + w.top // factor,
+                width=max(1, w.width // factor),
+                height=max(1, w.height // factor),
                 conf=w.conf,
             )
         )

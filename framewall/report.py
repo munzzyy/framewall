@@ -3,10 +3,25 @@
 from __future__ import annotations
 
 import json
+import re
 
 from . import __version__
 from .finding import Severity
 from .ocr import tesseract_path
+
+# Snippets and paths carry attacker-controlled bytes: a snippet is text OCR'd
+# out of the scanned image or lifted from its metadata, and a path is whatever
+# the file was named. Printed raw to a terminal, an embedded ESC sequence would
+# run - clearing the screen, recoloring, or forging report lines via a newline.
+# Escape every C0/C1 control byte (including tab/newline/CR) to a visible \xNN
+# before it reaches the terminal. Only the human renderer needs this; JSON and
+# SARIF go through json.dumps, which already escapes control characters.
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _safe(s) -> str:
+    return _CONTROL_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", str(s))
+
 
 _COLOR = {
     Severity.HIGH: "\033[31m",
@@ -28,9 +43,9 @@ def render_human(results, color: bool = True) -> str:
     lines = []
     for r in results:
         lines.append("")
-        lines.append(f"  framewall  {r.path}")
+        lines.append(f"  framewall  {_safe(r.path)}")
         if r.error:
-            lines.append(c("\033[1;31m", f"  ERROR  {r.error}"))
+            lines.append(c("\033[1;31m", f"  ERROR  {_safe(r.error)}"))
             continue
 
         ocr_note = "used" if r.ocr_used else f"skipped ({r.ocr_skipped_reason})"
@@ -45,7 +60,7 @@ def render_human(results, color: bool = True) -> str:
             lines.append(f"  {tag} {f.title}  [{f.rule_id}]{loc}")
             lines.append(f"           {f.detail}")
             if f.snippet:
-                lines.append(c("\033[90m", f"           > {f.snippet}"))
+                lines.append(c("\033[90m", f"           > {_safe(f.snippet)}"))
             if f.remediation:
                 lines.append(c("\033[90m", f"           fix: {f.remediation}"))
             lines.append("")
@@ -102,15 +117,32 @@ def _finding_payload(f):
 
 _SARIF_LEVEL = {Severity.HIGH: "error", Severity.MEDIUM: "warning", Severity.LOW: "note"}
 _SEC_SEVERITY = {Severity.HIGH: "8.0", Severity.MEDIUM: "5.0", Severity.LOW: "3.0"}
+# An image framewall couldn't scan must show up in the report of record, not
+# vanish from it: a security gate reading only the SARIF would otherwise treat
+# an unreadable or oversized image as if it had passed. Surface each as an
+# error-level result under this synthetic rule.
+_SCAN_ERROR_RULE = "framewall-scan-error"
 
 
 def render_sarif(results) -> str:
     rule_ids = sorted({f.rule_id for r in results for f in r.findings})
     rules = [{"id": rid, "name": rid} for rid in rule_ids]
+    if any(r.error for r in results):
+        rules.append({"id": _SCAN_ERROR_RULE, "name": _SCAN_ERROR_RULE})
 
     sarif_results = []
     for r in results:
         if r.error:
+            sarif_results.append(
+                {
+                    "ruleId": _SCAN_ERROR_RULE,
+                    "level": "error",
+                    "message": {"text": f"framewall could not scan this image: {r.error}"},
+                    "locations": [
+                        {"physicalLocation": {"artifactLocation": {"uri": r.path}}}
+                    ],
+                }
+            )
             continue
         for f in r.findings:
             props = {"security-severity": _SEC_SEVERITY[f.severity], "layer": f.layer}

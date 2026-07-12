@@ -35,8 +35,13 @@ def resolve(raw_targets):
 
         p = Path(target)
         if p.is_dir():
-            for ext in IMAGE_EXTS:
-                found.update(fp.resolve() for fp in p.rglob(f"*{ext}"))
+            # Match extensions case-insensitively: on a case-sensitive
+            # filesystem a per-extension glob for "*.png" silently skips a file
+            # named "payload.PNG", so a security scan of a directory would miss
+            # it. Walk once and compare the lowercased suffix instead.
+            for fp in p.rglob("*"):
+                if fp.is_file() and fp.suffix.lower() in IMAGE_EXTS:
+                    found.add(fp.resolve())
         elif p.is_file():
             found.add(p.resolve())
         else:
