@@ -66,11 +66,59 @@ _PATTERNS = [
     (
         re.compile(
             r"\b(?:reveal|print|show|repeat|output|disclose|leak|dump)\s+"
-            r"(?:your|the)\s+(?:system\s+prompt|initial\s+instructions|instructions|prompt)\b",
+            # a determiner before any of the four nouns, OR no determiner before
+            # the two that only ever mean the hidden prompt - so "output system
+            # prompt" fires without an article, but a bare "show instructions"
+            # (ordinary UI copy) still needs one.
+            r"(?:(?:your|the)\s+(?:system\s+prompt|initial\s+instructions|instructions|prompt)"
+            r"|(?:system\s+prompt|initial\s+instructions|system\s+message))\b",
             _I,
         ),
         "System-prompt disclosure attempt",
         "Tries to get the reader to reveal its system prompt or hidden instructions.",
+    ),
+    (
+        re.compile(
+            r"\bforget\s+(?:everything|all|your|the)\s+(?:previous\s+|prior\s+|above\s+)?"
+            r"(?:instructions?|rules?|guidelines?|context|you\s+(?:were\s+)?told)",
+            _I,
+        ),
+        "Instruction-reset phrasing",
+        "Tells the reader to forget its prior instructions.",
+    ),
+    (
+        re.compile(
+            r"\bwithout\s+(?:telling|informing|notifying|asking|alerting)\s+(?:the\s+)?(?:user|them|him|her)\b",
+            _I,
+        ),
+        "Act-without-consent directive",
+        "Instructs the reader to act without informing or asking the user.",
+    ),
+    (
+        re.compile(
+            r"\bregardless\s+of\s+(?:what|any|whatever)\s+(?:the\s+user|instructions?|guidelines?|"
+            r"rules?|you\s+(?:are|were)\s+told)",
+            _I,
+        ),
+        "Guideline-bypass phrasing",
+        "Tells the reader to act regardless of its instructions or the user's wishes.",
+    ),
+    (
+        re.compile(
+            r"\balways\s+(?:run|execute|use|call|invoke)\b[^\n.]*\bwithout\s+(?:asking|confirming|prompting|checking)",
+            _I,
+        ),
+        "Silent tool-execution directive",
+        "Tells the reader to always run something without asking.",
+    ),
+    (
+        re.compile(
+            r"\b(?:with\s+)?no\s+(?:safety|content|ethical|moral)\s+"
+            r"(?:rules?|guidelines?|filters?|restrictions?|limits?|boundaries)\b",
+            _I,
+        ),
+        "Safety-bypass phrasing",
+        "Asserts the reader has no safety, content, or ethical rules - a jailbreak framing.",
     ),
     (
         re.compile(
