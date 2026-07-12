@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "framewall"
+version = "0.1.0"
+description = "Scan a screenshot for visually-embedded prompt injection before a vision or computer-use agent reads it."
+readme = "README.md"
+license = { text = "Prosperity Public License 3.0.0" }
+requires-python = ">=3.10"
+authors = [{ name = "Cole Munz" }]
+dependencies = ["Pillow>=10.0.0"]
+keywords = ["prompt-injection", "computer-use", "vision-agent", "security",
+            "ocr", "image-security", "ai-safety", "screenshot", "agent-security"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: Multimedia :: Graphics",
+]
+
+[project.urls]
+Homepage = "https://github.com/munzzyy/framewall"
+Issues = "https://github.com/munzzyy/framewall/issues"
+
+[project.scripts]
+framewall = "framewall.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["framewall*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
