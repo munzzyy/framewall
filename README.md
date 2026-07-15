@@ -4,6 +4,10 @@
 [![License: Prosperity 3.0.0](https://img.shields.io/badge/license-Prosperity--3.0.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
+![framewall scanning a poisoned screenshot: fake system-role labels, a hide-from-user directive, low-contrast hidden text, and injection text in image metadata, verdict DANGEROUS](docs/media/demo.svg)
+
+![the poisoned screenshot framewall is scanning](examples/poisoned-screenshot.png)
+
 A vision or computer-use agent reads a screenshot the same way it reads
 anything else: as tokens. Text a human would never notice - a paragraph
 painted a few shades off the background, a single line rendered at 6pt, a
@@ -61,8 +65,24 @@ sentence. [MIRAGE](https://arxiv.org/abs/2605.28116) shows that realistic,
 context-blended payloads dropped into ordinary user-generated content
 regions of a screenshot fool every vision-language agent it tests. That's
 the motivation; the implementation here is framewall's own - five
-independent, from-scratch heuristics plus a pattern engine, not a
-reproduction of any of those papers' methods.
+independent, from-scratch checks: compiled regex patterns over OCR'd text,
+plus pixel and geometry heuristics for the rest. Not a reproduction of any
+of those papers' methods, and not an NLP or semantic model - the patterns
+are string matching, the rest is Pillow.
+
+## Where it fits
+
+Lakera Guard, LLM Guard, and NeMo Guardrails all work on plaintext - they
+sit after a vision model has already turned the image into a description
+or after OCR has already run, and they scan what came out. framewall runs
+earlier: it looks at the image itself, before any model has looked at it,
+which is the only place you catch a payload that's built specifically to
+survive being looked at but not read - text 30 shades off the background,
+a box shaped like a system overlay, a comment chunk in the file's own
+metadata. None of that has a plaintext form until something already
+decided to extract it. Run framewall as the gate before a screenshot
+reaches the agent; a text-layer guardrail downstream is still worth having
+for everything else the agent produces.
 
 ## Install
 
