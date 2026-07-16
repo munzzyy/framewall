@@ -252,3 +252,7 @@ coverage only goes up.
 ## License
 
 MIT — free to use, change, and ship, commercial or not. See [LICENSE](LICENSE).
+
+## Support
+
+If framewall caught a poisoned screenshot before your agent acted on it, [sponsoring](https://github.com/sponsors/munzzyy) is what keeps the payload corpus growing.
