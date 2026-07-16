@@ -158,6 +158,42 @@ Windows jobs run the tesseract-independent subset, which is most of the
 test suite - only `tests/test_ocr.py` and the OCR-gated half of
 `tests/test_corpus.py` need it, and they skip cleanly (see Tests below).
 
+### As a Claude Code hook
+
+CI scans images you already have. A hook scans the ones an agent is about to
+read, at the moment it tries. [`hooks/framewall-guard.sh`](hooks/framewall-guard.sh)
+is a `PreToolUse` guard: register it on the `Read` tool and it runs framewall
+on any image the agent opens, blocks the read when the verdict is
+`DANGEROUS`, and asks you to confirm when it's `SUSPICIOUS`. This is the piece
+[What it does not do](#what-it-does-not-do) has always pointed at - the gate
+before a screenshot reaches the agent, not after.
+
+Register it in `~/.claude/settings.json` (use the absolute path to the script):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "/absolute/path/to/framewall/hooks/framewall-guard.sh" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+It only scans image files and passes everything else straight through. The
+`SUSPICIOUS` verdict asks rather than denies on purpose: the overlay and
+low-contrast checks are shape heuristics that also fire on ordinary busy UI
+(see below), so a hard block there would get in your way for no good reason -
+a hard `DANGEROUS` block is reserved for the checks that actually read an
+injection string. If framewall isn't installed the read is allowed with a
+note on stderr, not blocked, so a missing dependency can't wall you off from
+every screenshot.
+
 ### Output formats
 
 - default - a colored, per-finding human report
