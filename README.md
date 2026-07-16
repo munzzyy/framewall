@@ -182,6 +182,15 @@ A finding's severity feeds a single verdict per image: **CLEAN** (nothing
 above low), **SUSPICIOUS** (a medium finding), or **DANGEROUS** (a high
 finding) - the worst finding decides, full stop.
 
+## Measured against a known-payload corpus
+
+[injection-fixtures](https://github.com/munzzyy/injection-fixtures) ships
+eight known visual-injection techniques as pytest fixtures. Run against all
+of them, framewall 0.1.0 catches 2 of 8 and false-positives on 1 of 4
+benign controls - the real number, not a cherry-picked one. Full
+per-technique table, what tripped the false positive, and the caveats that
+come with a one-run benchmark: [injection-fixtures' docs/benchmarks/framewall.md](https://github.com/munzzyy/injection-fixtures/blob/main/docs/benchmarks/framewall.md).
+
 ## What it does not do
 
 - **The overlay and low-contrast checks are shape heuristics, not readers.**
