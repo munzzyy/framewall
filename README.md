@@ -1,7 +1,7 @@
 # framewall
 
 [![CI](https://github.com/munzzyy/framewall/actions/workflows/ci.yml/badge.svg)](https://github.com/munzzyy/framewall/actions/workflows/ci.yml)
-[![License: Prosperity 3.0.0](https://img.shields.io/badge/license-Prosperity--3.0.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
 ![framewall scanning a poisoned screenshot: fake system-role labels, a hide-from-user directive, low-contrast hidden text, and injection text in image metadata, verdict DANGEROUS](docs/media/demo.svg)
@@ -251,6 +251,4 @@ coverage only goes up.
 
 ## License
 
-Prosperity Public License 3.0.0 - free for noncommercial use, thirty-day
-trial for commercial use. See [LICENSE](LICENSE). Contributions come in
-under the Blue Oak Model License; see [CONTRIBUTING.md](CONTRIBUTING.md).
+MIT — free to use, change, and ship, commercial or not. See [LICENSE](LICENSE).
