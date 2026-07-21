@@ -1,10 +1,21 @@
-"""The Claude Code PreToolUse guard in hooks/framewall-guard.sh."""
+"""The Claude Code PreToolUse guard in hooks/framewall-guard.sh.
+
+POSIX only. The tests exec the .sh directly, build PATH with ':', and rely on
+the executable bit, none of which mean anything on Windows - so the whole
+module skips there rather than failing on WinError 193.
+"""
 
 import json
 import os
 import stat
 import subprocess
 from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    os.name == "nt", reason="the guard is a POSIX shell hook; nothing to exec on Windows"
+)
 
 REPO = Path(__file__).resolve().parent.parent
 HOOK = REPO / "hooks" / "framewall-guard.sh"
