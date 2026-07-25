@@ -29,7 +29,9 @@ except Exception:
     print("")' 2>/dev/null)"
 
 # Only images are worth scanning; everything else is none of this hook's business.
-case "${file,,}" in
+# Lowercase with tr, not ${file,,} - that is a bash 4 expansion and macOS ships
+# bash 3.2, where it breaks the match and lets a non-image reach the scanner.
+case "$(printf '%s' "$file" | tr '[:upper:]' '[:lower:]')" in
   *.png|*.jpg|*.jpeg|*.gif|*.bmp|*.webp|*.tif|*.tiff) ;;
   *) exit 0 ;;
 esac
