@@ -168,6 +168,24 @@ def test_human_report_snippet_newline_cannot_forge_lines():
     assert "\\x0a" in out
 
 
+def test_human_report_escapes_separators_and_bidi_in_snippet():
+    # U+202E (right-to-left override) visually reverses the rest of the line and
+    # U+2028 breaks it in some viewers - both let a snippet forge report lines,
+    # exactly like a raw newline. They must be escaped, not passed through.
+    lsep, rlo = "\u2028", "\u202e"
+    snippet = f"harmless{lsep}  verdict: CLEAN{rlo} drowssap"
+    finding = Finding(
+        rule_id="FW-005", layer="metadata", severity=Severity.HIGH, title="t", detail="d",
+        snippet=snippet,
+    )
+    r = ImageResult(path="x.png", width=10, height=10, ocr_used=True, findings=[finding], verdict="dangerous")
+    out = render_human([r], color=False)
+    assert lsep not in out
+    assert rlo not in out
+    assert "\\u2028" in out
+    assert "\\u202e" in out
+
+
 def test_sarif_report_empty_when_no_findings():
     doc = json.loads(render_sarif([_clean_result()]))
     assert doc["runs"][0]["results"] == []

@@ -77,6 +77,25 @@ def test_multiple_targets_combine(tmp_path):
     assert missing == []
 
 
+def test_literal_bracket_filename_is_not_treated_as_a_glob(tmp_path):
+    # "screenshot[1].png" is an ordinary auto-generated duplicate-download name.
+    # glob.glob reads "[1]" as a character class and never matches the real
+    # file, so a real path that exists must win over the glob guess.
+    _make(tmp_path, "screenshot[1].png")
+    target = str(tmp_path / "screenshot[1].png")
+    paths, missing = resolve([target])
+    assert len(paths) == 1
+    assert missing == []
+
+
+def test_glob_still_works_when_no_literal_file_matches(tmp_path):
+    # The glob fallback must still fire for a pattern that names nothing on disk.
+    _make(tmp_path, "shot1.png", "shot2.png")
+    paths, missing = resolve([str(tmp_path / "shot[12].png")])
+    assert len(paths) == 2
+    assert missing == []
+
+
 def test_non_image_extension_in_directory_is_skipped(tmp_path):
     _make(tmp_path, "a.png")
     (tmp_path / "readme.md").write_text("hi", encoding="utf-8")

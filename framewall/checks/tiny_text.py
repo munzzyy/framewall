@@ -11,7 +11,9 @@ a thin strip - noisier, and says so in the finding text.
 
 from __future__ import annotations
 
-from PIL import ImageStat
+import array
+
+from PIL import Image
 
 from .. import grid
 from ..finding import Finding, Region, Severity
@@ -71,6 +73,33 @@ _MAX_FILL_RATIO = 0.85  # a straight edge lights up *every* block along its
 # length with no gaps; real text has letter- and word-shaped gaps in it.
 # Rejecting near-total fill is what tells the two apart without OCR.
 
+_SQUARES = [v * v for v in range(256)]  # 8-bit value -> its square
+
+
+def _high_detail_blocks(gray_image, block, cols, rows, min_stddev) -> list:
+    """Boolean rows x cols grid marking blocks whose internal contrast
+    (population standard deviation) is at least min_stddev.
+
+    Same math as an ImageStat pass per block, but the per-block mean and mean-
+    of-squares are computed by Pillow's C core (a BOX-filter downscale) rather
+    than a Python crop + Stat object per block. A 24 MP screenshot has ~1.5M of
+    these blocks, and the object-per-block loop is what made such a scan take
+    close to two minutes; this runs it in a fraction of a second. variance =
+    E[x^2] - E[x]^2, so a block clears the bar when that is >= min_stddev^2."""
+    mean = gray_image.convert("F").resize((cols, rows), Image.BOX)
+    mean_sq = gray_image.point(_SQUARES, "I").convert("F").resize((cols, rows), Image.BOX)
+    means = array.array("f")
+    means.frombytes(mean.tobytes())
+    mean_squares = array.array("f")
+    mean_squares.frombytes(mean_sq.tobytes())
+
+    threshold_sq = min_stddev * min_stddev
+    flagged = [[False] * cols for _ in range(rows)]
+    for i, (m, s) in enumerate(zip(means, mean_squares)):
+        if s - m * m >= threshold_sq:
+            flagged[i // cols][i % cols] = True
+    return flagged
+
 
 def find_heuristic(gray_image) -> list:
     """Pillow-only estimate used when tesseract isn't available. Flags thin,
@@ -81,13 +110,7 @@ def find_heuristic(gray_image) -> list:
     width, height = gray_image.size
     threshold_px = min(MIN_HEIGHT_FRACTION * min(width, height), MAX_HEIGHT_PX)
     cols, rows = grid.block_grid(width, height, _BLOCK)
-    flagged = [[False] * cols for _ in range(rows)]
-    for r in range(rows):
-        for c in range(cols):
-            box = grid.block_box(c, r, _BLOCK, width, height)
-            stddev = ImageStat.Stat(gray_image.crop(box)).stddev[0]
-            if stddev >= _DETAIL_STDDEV_MIN:
-                flagged[r][c] = True
+    flagged = _high_detail_blocks(gray_image, _BLOCK, cols, rows, _DETAIL_STDDEV_MIN)
 
     findings = []
     for left, top, w, h, n_blocks in grid.group_flagged(flagged, cols, rows, _BLOCK, width, height):

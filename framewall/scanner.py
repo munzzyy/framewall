@@ -3,6 +3,7 @@ compute the verdict."""
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 from . import imageio
@@ -17,13 +18,33 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None) -> ImageResult:
     result = ImageResult(path=str(path))
 
     try:
-        image = imageio.load_image(path)
+        frames = list(imageio.load_frames(path))
     except imageio.ImageError as e:
         result.error = str(e)
         return result
 
-    result.width, result.height = image.size
-    gray = image.convert("L")
+    findings = []
+    for index, frame in frames:
+        if index == 0:
+            result.width, result.height = frame.size
+        frame_findings = _scan_frame(frame, use_ocr, ocr_timeout, result)
+        if index > 0:
+            # Tag which frame a finding came from so a CLEAN-looking first frame
+            # can't hide an attack in a later one of an animated GIF / TIFF.
+            frame_findings = [
+                dataclasses.replace(f, detail=f"[frame {index}] {f.detail}")
+                for f in frame_findings
+            ]
+        findings.extend(frame_findings)
+
+    findings.sort(key=lambda f: f.sort_key())
+    result.findings = findings
+    result.verdict = compute_verdict(findings).value
+    return result
+
+
+def _scan_frame(image, use_ocr: bool, ocr_timeout, result) -> list:
+    gray = imageio.safe_convert(image, "L")
 
     findings = []
     low_contrast_findings = contrast.find(gray)
@@ -63,7 +84,4 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None) -> ImageResult:
             )
         findings.extend(tiny_text.find_heuristic(gray))
 
-    findings.sort(key=lambda f: f.sort_key())
-    result.findings = findings
-    result.verdict = compute_verdict(findings).value
-    return result
+    return findings

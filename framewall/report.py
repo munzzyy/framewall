@@ -13,14 +13,26 @@ from .ocr import tesseract_path
 # out of the scanned image or lifted from its metadata, and a path is whatever
 # the file was named. Printed raw to a terminal, an embedded ESC sequence would
 # run - clearing the screen, recoloring, or forging report lines via a newline.
-# Escape every C0/C1 control byte (including tab/newline/CR) to a visible \xNN
-# before it reaches the terminal. Only the human renderer needs this; JSON and
-# SARIF go through json.dumps, which already escapes control characters.
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# Escape every C0/C1 control byte (including tab/newline/CR) plus the Unicode
+# line/paragraph separators and directional-formatting characters - U+202E and
+# friends visually reverse the rest of the line and U+2028/U+2029 break it in
+# some viewers, both of which let a snippet forge report lines. Only the human
+# renderer needs this; JSON and SARIF go through json.dumps, which already
+# escapes control characters.
+_CONTROL_RE = re.compile(
+    "[\x00-\x1f\x7f-\x9f"
+    "\u2028\u2029"  # line / paragraph separators
+    "\u200e\u200f\u202a-\u202e\u2066-\u2069"  # bidi marks, overrides, isolates
+    "\ufeff]"  # BOM / zero-width no-break space
+)
 
 
 def _safe(s) -> str:
-    return _CONTROL_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", str(s))
+    def esc(m):
+        cp = ord(m.group())
+        return f"\\x{cp:02x}" if cp <= 0xFF else f"\\u{cp:04x}"
+
+    return _CONTROL_RE.sub(esc, str(s))
 
 
 _COLOR = {

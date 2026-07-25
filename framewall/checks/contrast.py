@@ -26,7 +26,6 @@ MIN_REGION_BLOCKS = 6  # ignore stray single-block antialiasing noise
 MIN_REGION_WIDTH = BLOCK * 3  # a single-column seam between two flat UI panels
 # is also "structured but low contrast" - requiring some width rules out a
 # panel-edge false positive while still catching a word's worth of text.
-LARGE_AREA_FRACTION = 0.06  # a region this big or bigger is HIGH, not MEDIUM
 
 
 def find(gray_image) -> list:
@@ -49,13 +48,16 @@ def find(gray_image) -> list:
     for left, top, w, h, n_blocks in grid.group_flagged(flagged, cols, rows, BLOCK, width, height):
         if n_blocks < MIN_REGION_BLOCKS or w < MIN_REGION_WIDTH:
             continue
-        area_fraction = (w * h) / (width * height)
-        severity = Severity.HIGH if area_fraction >= LARGE_AREA_FRACTION else Severity.MEDIUM
+        # This is a shape-only heuristic - it never reads the region, so it
+        # can't tell hidden instructions from an ordinary low-contrast photo or
+        # UI. Cap it at MEDIUM (verdict: suspicious). A hard DANGEROUS is
+        # reserved for the checks that actually recover an injection string
+        # (FW-001 re-OCRs these same regions; FW-005 reads metadata).
         findings.append(
             Finding(
                 rule_id=RULE_ID,
                 layer="low-contrast-text",
-                severity=severity,
+                severity=Severity.MEDIUM,
                 title="Low-contrast text-shaped region",
                 detail=(
                     f"A {w}x{h}px region has the texture of text (real internal "

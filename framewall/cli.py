@@ -47,7 +47,11 @@ def _fail_threshold(value: str):
     try:
         return Verdict.parse(value)
     except ValueError:
-        raise SystemExit(f"framewall: invalid --fail-on value {value!r}")
+        # Exit 2, argparse's usage-error convention, not 1. Exit 1 is the
+        # documented "scan ran and hit the --fail-on threshold" - a mistyped
+        # threshold must not be mistaken for a real detection in CI.
+        print(f"framewall: invalid --fail-on value {value!r}", file=sys.stderr)
+        raise SystemExit(2)
 
 
 def main(argv=None) -> int:
@@ -65,7 +69,18 @@ def main(argv=None) -> int:
         print(f"framewall: warning: no match for {m}", file=sys.stderr)
 
     use_ocr = not args.no_ocr
-    results = [scan_image(p, use_ocr=use_ocr) for p in paths]
+    results = []
+    for p in paths:
+        try:
+            results.append(scan_image(p, use_ocr=use_ocr))
+        except Exception as e:
+            # One hostile or malformed file must not abort a whole batch and
+            # leave its siblings unscanned. Record the failure as an error
+            # result (surfaced in every output format, non-zero exit) instead
+            # of letting the traceback propagate.
+            from .finding import ImageResult
+
+            results.append(ImageResult(path=str(p), error=f"scan failed: {e}"))
 
     color = not args.no_color and sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
     if args.json:

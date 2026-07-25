@@ -52,9 +52,13 @@ def test_fail_on_dangerous_lets_suspicious_through(suspicious_png):
     assert code in (0, 1)  # sanity: must return a real exit code either way
 
 
-def test_invalid_fail_on_value_raises_system_exit(clean_png):
-    with pytest.raises(SystemExit):
+def test_invalid_fail_on_value_exits_two_not_one(clean_png):
+    # Exit 1 is the documented "scan ran and hit the threshold"; a mistyped
+    # --fail-on must use argparse's usage-error exit 2 so CI can't mistake a
+    # typo for a real detection.
+    with pytest.raises(SystemExit) as exc_info:
         cli.main(["scan", str(clean_png), "--fail-on", "nonsense"])
+    assert exc_info.value.code == 2
 
 
 def test_missing_target_exits_two(capsys):
@@ -156,3 +160,29 @@ def test_multiple_targets_all_scanned(clean_png, suspicious_png, capsys):
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
     assert len(payload["images"]) == 2
+
+
+def test_one_failing_file_does_not_abort_the_batch(tmp_path, monkeypatch, capsys):
+    # A single hostile or malformed file must not take its siblings down with
+    # it: the crashing image is recorded as an error result and the rest still
+    # get scanned.
+    from framewall import scanner
+
+    good = tmp_path / "good.png"
+    clean_screenshot().save(good)
+    bad = tmp_path / "bad.png"
+    clean_screenshot().save(bad)
+
+    real_scan = scanner.scan_image
+
+    def flaky(path, *a, **k):
+        if str(path).endswith("bad.png"):
+            raise RuntimeError("boom")
+        return real_scan(path, *a, **k)
+
+    monkeypatch.setattr(cli, "scan_image", flaky)
+    code = cli.main(["scan", str(tmp_path), "--json", "--fail-on", "none"])
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload["images"]) == 2
+    assert any("error" in img for img in payload["images"])
+    assert code == 2  # an unscanned image forces a non-zero exit

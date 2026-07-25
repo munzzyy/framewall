@@ -56,11 +56,15 @@ def test_small_hidden_region_is_medium_severity():
     assert all(f.severity == Severity.MEDIUM for f in findings)
 
 
-def test_large_hidden_block_is_high_severity():
+def test_large_hidden_block_is_never_high_severity():
+    # A shape-only heuristic that never reads the region must not reach HIGH
+    # (verdict: dangerous) on area alone - that would hard-block ordinary
+    # low-contrast photos and screenshots. A hard DANGEROUS is reserved for the
+    # checks that actually recover an injection string (FW-001, FW-005).
     gray = low_contrast_paragraph().convert("L")
     findings = contrast.find(gray)
     assert findings
-    assert any(f.severity == Severity.HIGH for f in findings)
+    assert all(f.severity == Severity.MEDIUM for f in findings)
 
 
 def test_delta_near_default_max_contrast_is_still_caught():

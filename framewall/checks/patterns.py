@@ -13,8 +13,26 @@ noise is what trains people to stop reading the report.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 _I = re.IGNORECASE
+
+_SOFT_HYPHEN = "\u00ad"  # a discretionary hyphen renders as nothing mid-word
+
+
+def _normalize(text: str) -> str:
+    """Fold obfuscation before matching. A zero-width space or other
+    format/joiner character dropped between letters ("ig<U+200B>nore") leaves
+    the word perfectly readable to a vision model but breaks every regex, since
+    those characters are neither whitespace nor word characters. NFKC-normalize
+    (folds full-width and compatibility forms), then strip the format category
+    (Cf: ZWSP/ZWNJ/ZWJ/bidi marks/BOM) and the soft hyphen so the payload reads
+    as plain text. Reported spans then index this normalized string, which is
+    only ever used for the snippet - no caller maps them back to raw bytes."""
+    norm = unicodedata.normalize("NFKC", text)
+    return "".join(
+        ch for ch in norm if ch != _SOFT_HYPHEN and unicodedata.category(ch) != "Cf"
+    )
 
 # (compiled pattern, title, detail)
 _MODIFIERS = r"(?:(?:all|any|the|your|previous|prior|above|earlier|preceding|foregoing|system)\s+){0,3}"
@@ -152,6 +170,7 @@ _PATTERNS = [
 
 def scan_text(text: str):
     """Return [(title, detail, match_span, matched_text)] for every hit."""
+    text = _normalize(text)
     hits = []
     for rx, title, detail in _PATTERNS:
         for m in rx.finditer(text):

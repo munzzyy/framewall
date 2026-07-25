@@ -77,15 +77,34 @@ def test_suspicious_verdict_asks(tmp_path):
     assert out["permissionDecision"] == "ask"
 
 
-def test_unparseable_output_allows(tmp_path):
-    # framewall present but emitting something the hook can't read as a verdict
-    # must fail open, not block the read on a parse error.
+def _stub_framewall(tmp_path, body):
     stub = tmp_path / "framewall"
-    stub.write_text('#!/usr/bin/env bash\necho "tesseract exploded, not json"\n')
+    stub.write_text(f"#!/usr/bin/env bash\n{body}\n")
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
     img = tmp_path / "shot.png"
     img.write_bytes(b"not really a png")
+    return stub, img
+
+
+def test_no_verdict_asks_by_default(tmp_path):
+    # framewall present but emitting no readable verdict (a scan error, a crash,
+    # an unscannable image) must NOT silently allow the read - that's the whole
+    # bypass this guard closes. Default to ask.
+    _stub, img = _stub_framewall(tmp_path, 'echo "tesseract exploded, not json" >&2')
     env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
+    env.pop("FRAMEWALL_GUARD_FAIL", None)
     r = run({"tool_name": "Read", "tool_input": {"file_path": str(img)}}, env=env)
     assert r.returncode == 0
-    assert r.stdout.strip() == ""
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "ask"
+    assert "not scanned" in out["permissionDecisionReason"].lower() or "no" in out["permissionDecisionReason"].lower()
+
+
+def test_no_verdict_denies_when_fail_closed(tmp_path):
+    # Opt-in strict mode turns the same no-verdict outcome into a hard block.
+    _stub, img = _stub_framewall(tmp_path, 'echo "boom" >&2')
+    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}", FRAMEWALL_GUARD_FAIL="closed")
+    r = run({"tool_name": "Read", "tool_input": {"file_path": str(img)}}, env=env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny"

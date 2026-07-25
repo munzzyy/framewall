@@ -22,7 +22,14 @@ def resolve(raw_targets):
     found = set()
     unmatched = []
     for target in raw_targets:
-        if _GLOB_CHARS & set(target):
+        # A real path wins over a glob guess. A file literally named
+        # "screenshot[1].png" (an ordinary auto-generated duplicate-download
+        # name) contains a glob metacharacter, but glob.glob would read "[1]"
+        # as a character class and never match the file - so it would silently
+        # go unscanned. Check the filesystem first; only fall back to glob
+        # expansion for a target that doesn't name something on disk.
+        path = Path(target)
+        if not path.exists() and _GLOB_CHARS & set(target):
             matches = globmod.glob(target, recursive=True)
             if not matches:
                 unmatched.append(target)

@@ -66,6 +66,23 @@ def test_tiny_text_fixture_is_flagged_without_ocr(tmp_path):
     assert rank(Verdict(result.verdict)) >= rank(Verdict.SUSPICIOUS)
 
 
+def test_payload_in_a_later_frame_is_not_reported_clean(tmp_path):
+    """A multi-page TIFF / animated GIF carries a payload just as easily in
+    frame 2 as frame 1. A scan that only ever looked at the first frame would
+    return a confident CLEAN on a file whose later frame is the attack."""
+    blank = _images.clean_screenshot()
+    payload = _images.low_contrast_paragraph()  # trips FW-002 on shape alone
+    for ext in ("tif", "gif"):
+        p = tmp_path / f"multi.{ext}"
+        blank.save(p, save_all=True, append_images=[payload])
+        result = scan_image(p, use_ocr=False)
+        assert result.error == ""
+        assert rank(Verdict(result.verdict)) >= rank(Verdict.SUSPICIOUS), (
+            f"{ext}: a payload in frame 2 was reported {result.verdict}"
+        )
+        assert any("frame 1" in f.detail for f in result.findings)
+
+
 def test_benign_fixture_stays_clean_across_repeated_scans(tmp_path):
     """Determinism check: the heuristics have no randomness, so scanning the
     same clean image twice must agree."""
