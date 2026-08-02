@@ -262,6 +262,26 @@ come with a one-run benchmark: [injection-fixtures' docs/benchmarks/framewall.md
 - **It only looks at what's in front of it.** It doesn't fetch, render, or
   re-screenshot anything - no network access at scan time, ever.
 
+## What framewall cannot see
+
+Every check keys on text or text-like structure: injection phrasing, hidden
+or tiny text shapes, overlay boxes, metadata strings, camouflage patterns.
+There is a published attack class with none of that. MIRAGE
+([arXiv 2606.20717](https://arxiv.org/abs/2606.20717) - a different paper
+from the MIRAGE cited above) uses diffusion-guided adversarial perturbation
+to steer a vision agent with images that are perceptually benign and contain
+no recoverable text at all, confined to a region an unprivileged attacker
+controls, like an ad slot. A screenshot carrying that payload comes back
+with no findings here, and no amount of OCR or shape heuristics changes
+that - the signal isn't text.
+
+That's why a clean result reads `No text-shaped injection found` rather
+than "safe": absence of findings means the text-shaped attack surface came
+up empty, and nothing more. If your threat model includes adversarial
+perturbation attacks, you need a defense aimed at that class (input
+sanitization at the model layer, region provenance, or not feeding
+untrusted image regions to the agent at all); no text scanner covers it.
+
 ## Exit codes
 
 - `0` - scan completed, worst verdict stayed below `--fail-on`

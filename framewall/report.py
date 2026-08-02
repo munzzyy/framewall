@@ -67,7 +67,14 @@ def render_human(results, color: bool = True) -> str:
         lines.append("")
 
         if not r.findings:
-            lines.append(c("\033[32m", "  No findings. Nothing suspicious surfaced."))
+            # Scoped on purpose: framewall looks for text and text-shaped
+            # structure. "No findings" must not read as "this image is safe" -
+            # a payload with no recoverable text (see the README's "What
+            # framewall cannot see") returns exactly this.
+            lines.append(
+                c("\033[32m", "  No text-shaped injection found.")
+                + " This scanner only sees text and text-like structure; it can't rule out payloads that contain neither."
+            )
         for f in r.findings:
             tag = c(_COLOR[f.severity], f" {f.severity.label.upper():^8} ")
             loc = f"  @ {f.region}" if f.region else ""

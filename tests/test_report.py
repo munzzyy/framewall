@@ -32,9 +32,13 @@ def _error_result(path="broken.png"):
     return ImageResult(path=path, error="not a readable image")
 
 
-def test_human_report_clean_says_no_findings():
+def test_human_report_clean_verdict_is_scoped_not_absolute():
+    """A clean report must say what was ruled out (text-shaped injection),
+    not imply the image is safe - framewall can't see payloads that carry
+    no recoverable text, and its output must not pretend otherwise."""
     out = render_human([_clean_result()], color=False)
-    assert "No findings" in out
+    assert "No text-shaped injection found" in out
+    assert "can't rule out" in out
     assert "CLEAN" in out
 
 
