@@ -13,11 +13,17 @@ without a cap a busy or crafted screenshot can demand hundreds of them), and
 every pass is charged against the scan's wall-clock budget. Anything skipped
 for either reason lands in the budget's notes so a truncated scan reports
 itself as truncated.
+
+When the normal passes match nothing, two recovery passes (see recover.py)
+take one more swing each at text built to defeat plain OCR: a residual pass
+for near-background text, and a deskew pass for text rotated off-axis.
 """
 
 from __future__ import annotations
 
+from .. import imageio
 from .. import ocr as ocr_mod
+from .. import recover
 from . import patterns
 from ..finding import Finding, Region, Severity
 
@@ -30,7 +36,8 @@ REGION_MERGE_GAP = 12  # px; regions closer than this are one payload split
 # for OCR than reading fragments
 
 
-def find(image, low_contrast_regions=None, timeout=None, lang=None, budget=None):
+def find(image, gray=None, low_contrast_regions=None, extra_regions=None,
+         timeout=None, lang=None, budget=None, recovery=True):
     """Returns (findings, words, lines). `words` and `lines` are exposed so
     the tiny-text check can reuse this OCR pass instead of paying for a
     second one. `lines` come only from the primary full-image pass - a
@@ -50,7 +57,7 @@ def find(image, low_contrast_regions=None, timeout=None, lang=None, budget=None)
     # words but no line structure.
     segments = [ln.text for ln in lines] if lines else [" ".join(w.text for w in words)]
 
-    boxes = _bounded_boxes(low_contrast_regions, None, budget)
+    boxes = _bounded_boxes(low_contrast_regions, extra_regions, budget)
     for index, box in enumerate(boxes):
         if budget.exhausted():
             budget.note(
@@ -69,9 +76,72 @@ def find(image, low_contrast_regions=None, timeout=None, lang=None, budget=None)
             # own line so a header hidden at low contrast anchors too.
             segments.append(" ".join(w.text for w in region_words))
 
+    findings = _findings_from(segments, words)
+
+    if recovery and not findings and ocr_mod.tesseract_path() is not None:
+        if gray is None:
+            gray = imageio.safe_convert(image, "L")
+        findings.extend(_recovery_findings(gray, per_pass, lang, budget))
+
+    return findings, words, lines
+
+
+def _recovery_findings(gray, per_pass, lang, budget) -> list:
+    """One extra OCR pass per recovery transform, budget permitting. Only
+    reached when nothing matched, so any hit here is a payload the normal
+    passes could not read."""
+    if budget.exhausted():
+        budget.note(
+            "the scan time budget ran out before the hidden-text recovery "
+            "passes; the scan is partial"
+        )
+        return []
+    try:
+        words, lines = ocr_mod.ocr_image(
+            recover.residual_text(gray), timeout=budget.clamp(per_pass), lang=lang
+        )
+    except ocr_mod.OcrTimeout:
+        budget.note("tesseract timed out on the residual recovery pass")
+        words, lines = [], []
+    segments = [ln.text for ln in lines] if lines else [" ".join(w.text for w in words)]
+    found = _findings_from(
+        segments, words,
+        provenance="Recovered by amplifying detail that sits nearly flush with the background.",
+    )
+    if found:
+        return found
+
+    if budget.exhausted():
+        budget.note(
+            "the scan time budget ran out before the deskew recovery pass; "
+            "the scan is partial"
+        )
+        return []
+    angle = recover.detect_skew(gray)
+    if angle is None:
+        return []
+    try:
+        words, lines = ocr_mod.ocr_image(
+            recover.deskewed(gray, angle), timeout=budget.clamp(per_pass), lang=lang
+        )
+    except ocr_mod.OcrTimeout:
+        budget.note("tesseract timed out on the deskew recovery pass")
+        return []
+    segments = [ln.text for ln in lines] if lines else [" ".join(w.text for w in words)]
+    # Word boxes from the rotated frame don't map back to image coordinates,
+    # so these findings carry no region - the snippet still says what was read.
+    return _findings_from(
+        segments, [],
+        provenance=f"Recovered after counter-rotating the image {angle} degrees.",
+    )
+
+
+def _findings_from(segments, locate_words, provenance=None) -> list:
     full_text = "\n".join(segments)
     findings = []
     for title, detail, _span, matched in patterns.scan_text(full_text):
+        if provenance:
+            detail = f"{detail} {provenance}"
         findings.append(
             Finding(
                 rule_id=RULE_ID,
@@ -79,12 +149,12 @@ def find(image, low_contrast_regions=None, timeout=None, lang=None, budget=None)
                 severity=Severity.HIGH,
                 title=title,
                 detail=detail,
-                region=_locate(words, matched),
+                region=_locate(locate_words, matched),
                 snippet=matched[:200],
                 remediation="Treat this image as untrusted input. Don't let an agent act on an instruction recovered from inside a screenshot.",
             )
         )
-    return findings, words, lines
+    return findings
 
 
 def _bounded_boxes(low_contrast_regions, extra_regions, budget) -> list:

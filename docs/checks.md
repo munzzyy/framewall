@@ -49,6 +49,12 @@ of high-contrast detail, with straight edges (panel borders, button
 outlines) explicitly excluded since a solid line and a line of text are the
 same shape at this resolution.
 
+The strip estimate also runs alongside OCR, not only instead of it: text
+below tesseract's recognition floor produces no line box at all, which used
+to be this check's blind spot. A flagged strip that no OCR line covers gets
+cropped, contrast-boosted, upscaled, and read again; if words come back,
+the strip is reported with the recovered text quoted.
+
 Fine print is normal on its own - check whether the recovered text, or
 without OCR the flagged region, carries directives aimed at an agent.
 
@@ -84,3 +90,25 @@ flagged just for having metadata at all.
 
 Strip metadata before the image reaches an agent, or confirm the embedded
 text is expected for wherever this image came from.
+
+## FW-006
+
+High-frequency two-tone camouflage region. Severity: medium.
+
+Pillow only, no OCR needed - this one flags a sizable region that is three
+things at once: maximal contrast inside each small block, a palette of
+essentially two values with both well represented, and periodic - it
+repeats exactly under a small pixel shift in both axes. That combination is the fingerprint of a
+fine checkerboard or stripe field, the pattern used to stamp text into a
+region OCR binarization cannot survive. Real text is two-tone but aperiodic;
+photos and noise are not two-tone; flat fills and gradients have no
+contrast. The requirement that the region be tall as well as wide keeps
+table rules, dashed borders, and box-drawing lines out.
+
+The one legitimate collision is ordered (Bayer-style) dithering, which is a
+periodic two-tone field on purpose; a screenshot region carrying one will
+trip this check and deserves the same second look.
+
+The check never reads any text - it flags the pattern, not what is hidden
+in it. Look at the region directly, or re-render the screenshot without the
+patterned area, before letting an agent read it.

@@ -114,5 +114,57 @@ def tiny_text_image(text: str = INJECTION_TEXT, font_size: int = 9) -> Image.Ima
     return img
 
 
+def white_on_white_injection(text: str = INJECTION_TEXT) -> Image.Image:
+    """Text one shade off pure white: imperceptible to a human, still a real
+    pixel value. One shade is below the low-contrast check's noise floor (a
+    1-shade block has almost no standard deviation), so reading it back
+    takes the residual recovery pass, not FW-002."""
+    img = Image.new("RGB", (WIDTH, HEIGHT), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    d.text((120, 300), text, fill=(254, 254, 254), font=_font(18))
+    return img
+
+
+def rotated_injection(text: str = INJECTION_TEXT, angle: int = 22) -> Image.Image:
+    """Upright text rotated well past what tesseract tolerates (a few
+    degrees), the way a watermark or a deliberately OCR-hostile payload
+    sits. Read back by the deskew recovery pass."""
+    img = Image.new("RGB", (WIDTH, HEIGHT), "white")
+    tmp = Image.new("RGBA", (760, 48), (0, 0, 0, 0))
+    ImageDraw.Draw(tmp).text((4, 10), text, fill=(40, 40, 40, 255), font=_font(18))
+    rotated = tmp.rotate(angle, expand=True, resample=Image.BICUBIC)
+    img.paste(rotated, (100, 180), rotated)
+    return img
+
+
+def tiny_corner_injection(text: str = INJECTION_TEXT) -> Image.Image:
+    """A short instruction in very small type tucked into a corner - below
+    tesseract's recognition floor at native size, readable once the strip
+    heuristic finds it and the region pass upscales it."""
+    img = clean_screenshot()
+    d = ImageDraw.Draw(img)
+    d.text((WIDTH - 300, HEIGHT - 14), text[:64], fill=(90, 90, 90), font=_font(7))
+    return img
+
+
+def edge_camouflage(text: str = INJECTION_TEXT) -> Image.Image:
+    """The payload stamped into a fine checkerboard in alternating tones, so
+    OCR binarization drowns in edges - the FW-006 shape. The check flags the
+    patch itself; nothing here expects the words back."""
+    img = clean_screenshot()
+    d = ImageDraw.Draw(img)
+    cell = 4
+    left, top, w, h = 280, 420, 560, 168
+    for y in range(top, top + h, cell):
+        for x in range(left, left + w, cell):
+            shade = 20 if ((x - left) // cell + (y - top) // cell) % 2 == 0 else 235
+            d.rectangle([x, y, x + cell - 1, y + cell - 1], fill=(shade, shade, shade))
+    font = _font(14)
+    for i, line in enumerate((text[:44], text[44:88])):
+        shade = 235 if i % 2 == 0 else 20
+        d.text((left + 8, top + 40 + i * 22), line, fill=(shade, shade, shade), font=font)
+    return img
+
+
 def solid_color(width: int = 200, height: int = 200, color=(255, 255, 255)) -> Image.Image:
     return Image.new("RGB", (width, height), color)

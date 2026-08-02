@@ -22,6 +22,10 @@ MALICIOUS_FIXTURES = {
     "low_contrast_paragraph": (_images.low_contrast_paragraph, Verdict.DANGEROUS),
     "fake_system_overlay": (_images.fake_system_overlay, Verdict.DANGEROUS),
     "tiny_text_image": (_images.tiny_text_image, Verdict.SUSPICIOUS),
+    "white_on_white_injection": (_images.white_on_white_injection, Verdict.DANGEROUS),
+    "rotated_injection": (_images.rotated_injection, Verdict.DANGEROUS),
+    "tiny_corner_injection": (_images.tiny_corner_injection, Verdict.SUSPICIOUS),
+    "edge_camouflage": (_images.edge_camouflage, Verdict.SUSPICIOUS),
 }
 
 
@@ -64,6 +68,15 @@ def test_tiny_text_fixture_is_flagged_without_ocr(tmp_path):
     p = _save(tmp_path, "tiny", _images.tiny_text_image())
     result = scan_image(p, use_ocr=False)
     assert rank(Verdict(result.verdict)) >= rank(Verdict.SUSPICIOUS)
+
+
+def test_edge_camouflage_is_flagged_without_ocr(tmp_path):
+    """FW-006 needs no OCR: the periodic two-tone patch is the finding, no
+    matter whether the text stamped into it ever comes back."""
+    p = _save(tmp_path, "camouflage", _images.edge_camouflage())
+    result = scan_image(p, use_ocr=False)
+    assert rank(Verdict(result.verdict)) >= rank(Verdict.SUSPICIOUS)
+    assert any(f.rule_id == "FW-006" for f in result.findings)
 
 
 def test_payload_in_a_later_frame_is_not_reported_clean(tmp_path):
