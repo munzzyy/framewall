@@ -41,13 +41,13 @@ $ framewall scan examples/poisoned-screenshot.png --no-color
            A 620x80px near-solid-fill box (near an edge) contains patches of higher-detail content consistent with text - the shape a fake 'system message' or 'AI notice' overlay takes. Heuristic only: real UI (toasts, banners, tooltips, cookie notices) has this same shape and will trip this check too.
            fix: Look at this region directly. If the text addresses an agent rather than a human, treat the image as untrusted.
 
-  6 high, 4 medium   verdict: DANGEROUS
+  7 high, 4 medium   verdict: DANGEROUS
 ```
 
 That's a real run against `examples/poisoned-screenshot.png`, trimmed to one
-finding per check for the README - the summary line (`6 high, 4 medium`) is
-the actual, untrimmed count; run the command yourself to see all ten. The
-image stacks all five techniques framewall looks for on purpose;
+finding per check for the README - the summary line (`7 high, 4 medium`) is
+the actual, untrimmed count; run the command yourself to see all eleven. The
+image stacks five hiding techniques on purpose;
 `examples/clean-screenshot.png` is the same mockup with none of them, and
 comes back CLEAN. Both are committed, built by `examples/generate.py`, so
 you can see exactly what's in them and regenerate them yourself.
@@ -64,7 +64,7 @@ most of them fail once the payload stops being an obvious, high-contrast
 sentence. [MIRAGE](https://arxiv.org/abs/2605.28116) shows that realistic,
 context-blended payloads dropped into ordinary user-generated content
 regions of a screenshot fool every vision-language agent it tests. That's
-the motivation; the implementation here is framewall's own - five
+the motivation; the implementation here is framewall's own - six
 independent, from-scratch checks: compiled regex patterns over OCR'd text,
 plus pixel and geometry heuristics for the rest. Not a reproduction of any
 of those papers' methods, and not an NLP or semantic model - the patterns
@@ -87,6 +87,13 @@ for everything else the agent produces.
 ## Install
 
 ```bash
+pipx install git+https://github.com/munzzyy/framewall
+```
+
+framewall is not on PyPI yet, so install it straight from this repo -
+`pip install framewall` will not get you this tool. For hacking on it:
+
+```bash
 git clone https://github.com/munzzyy/framewall
 cd framewall
 python3 -m venv .venv
@@ -95,10 +102,15 @@ python3 -m venv .venv
 
 Pillow is the one runtime dependency. The core injection-text detector also
 wants the `tesseract` CLI on PATH (`apt install tesseract-ocr`,
-`brew install tesseract`, `choco install tesseract`) - framewall shells out
+`brew install tesseract`, `choco install tesseract`,
+`pacman -S tesseract tesseract-data-eng`) - framewall shells out
 to it as a subprocess and never links it in as a Python package, so there's
-no `pytesseract` dependency to carry. Without tesseract, framewall still
-runs; it just runs in heuristic-only mode (see below).
+no `pytesseract` dependency to carry. On most Linux distros the language
+data is a separate package from the binary (`tesseract-ocr-eng` on
+Debian/Ubuntu, `tesseract-data-eng` on Arch); a tesseract without it runs
+but reads nothing, which framewall detects and says out loud rather than
+scanning blind (see below). Without tesseract, framewall still runs; it
+just runs in heuristic-only mode.
 
 ## Usage
 
@@ -108,15 +120,30 @@ framewall scan ./screenshots                # every image in a directory, recurs
 framewall scan "./screenshots/*.png"         # a glob (quoted so it works on Windows too)
 framewall scan a.png b.png c.png             # multiple targets
 framewall scan screenshot.png --no-ocr       # force heuristic-only, even if tesseract is installed
+framewall scan screenshot.png --lang eng+deu # tesseract language(s); FRAMEWALL_TESSERACT_LANG works too
+framewall scan huge.png --max-scan-seconds 60  # whole-image OCR ceiling (default 30; 0 lifts it)
 ```
+
+Every OCR pass for one image draws on a single wall-clock budget
+(`--max-scan-seconds`, default 30), and the number of flagged regions that
+get their own OCR pass is capped. Without those bounds, one busy or crafted
+screenshot can demand hundreds of tesseract subprocesses and stall a
+synchronous caller for hours - which would turn the hook below into a
+denial-of-service target. Anything the bounds cut short is reported as a
+`note:` line (and a `notes` array in `--json`) saying the scan is partial,
+so a truncated scan never passes itself off as a completed clean one.
 
 ### Two modes
 
-**With tesseract** (the default when it's found): all five checks run,
-including the core one - OCR the image, OCR any low-contrast region a
-second time after a local contrast boost, and scan whatever text comes back
-for directives aimed at an agent. This is the only mode that actually reads
-the words instead of just their shape.
+**With tesseract** (the default when it's found): all six checks run,
+including the core one - OCR the image, OCR any flagged region a second
+time after a local contrast boost and upscale, and scan whatever text comes
+back for directives aimed at an agent. When none of that matches, two
+recovery passes take one more swing each at text built to defeat plain OCR:
+a residual pass that amplifies detail sitting nearly flush with its
+background (catches text one shade off white), and a deskew pass that
+detects off-axis text and re-reads the image counter-rotated. This is the
+only mode that actually reads the words instead of just their shape.
 
 **Without tesseract** (`--no-ocr`, or tesseract just isn't installed): the
 image-analysis heuristics still run - low-contrast region shape, fake
@@ -133,14 +160,20 @@ returns nothing, which would make every image look clean; when that happens
 the report says `OCR: skipped (tesseract is installed but read no text...)`
 rather than passing the image silently, so a clean verdict never hides a
 detector that failed to run. Fix it with `apt install tesseract-ocr-eng`
-(or the equivalent language pack) and re-scan.
+(or the equivalent language pack) and re-scan. The probe tests the language
+the scan will actually use: pick one with `--lang deu` (or
+`FRAMEWALL_TESSERACT_LANG=deu` for the hook), and if that pack is missing
+the skip reason names it.
 
 ### In CI
 
 ```yaml
-- run: pip install framewall
+- run: pip install git+https://github.com/munzzyy/framewall
 - run: framewall scan ./agent-screenshots --fail-on suspicious
 ```
+
+(framewall is not on PyPI yet; pin the install to a tag or commit if you
+want reproducible CI.)
 
 `--fail-on` takes `suspicious`, `dangerous`, or `none` (default
 `suspicious`). It also speaks SARIF for the GitHub Security tab:
@@ -213,6 +246,7 @@ Full detail, thresholds, and the reasoning behind each one:
 | FW-003 | Text below legible size | no (better with) | medium |
 | FW-004 | Fake system/overlay UI box | no | medium |
 | FW-005 | Injection text in PNG/EXIF metadata | no | medium/high |
+| FW-006 | High-frequency two-tone camouflage region | no | medium |
 
 A finding's severity feeds a single verdict per image: **CLEAN** (nothing
 above low), **SUSPICIOUS** (a medium finding), or **DANGEROUS** (a high
@@ -222,10 +256,20 @@ finding) - the worst finding decides, full stop.
 
 [injection-fixtures](https://github.com/munzzyy/injection-fixtures) ships
 eight known visual-injection techniques as pytest fixtures. Run against all
-of them, framewall 0.1.0 catches 2 of 8 and false-positives on 1 of 4
-benign controls - the real number, not a cherry-picked one. Full
-per-technique table, what tripped the false positive, and the caveats that
-come with a one-run benchmark: [injection-fixtures' docs/benchmarks/framewall.md](https://github.com/munzzyy/injection-fixtures/blob/main/docs/benchmarks/framewall.md).
+of them (2026-08-02, corpus 0.1.0), framewall 0.2.0 catches 7 of 8 and
+false-positives on 1 of 4 benign controls - the real numbers from a fresh
+run of that repo's `benchmark/run_framewall.py`, not cherry-picked ones.
+The one miss is `low-opacity` (text at ~11% alpha over per-pixel noise; see
+the limits below), and the one false positive is `benign-ui` tripping the
+FW-004 shape heuristic, which is the documented cost of flagging
+overlay-shaped UI at all. framewall 0.1.0 scored 2 of 8; re-run today it
+scores 3 of 8 (the corpus's noise rendering changed and its `caption-chrome`
+now OCRs directly), so the honest attribution is four catches added by
+0.2.0: the recovery passes (white-on-white, rotated-skew), the upscaled
+strip OCR (tiny-corner), and FW-006 (edge-noise).
+`tests/test_benchmark_floor.py` re-measures this floor in CI so it can't
+silently regress. Per-technique history and caveats:
+[injection-fixtures' docs/benchmarks/framewall.md](https://github.com/munzzyy/injection-fixtures/blob/main/docs/benchmarks/framewall.md).
 
 ## What it does not do
 
@@ -240,19 +284,21 @@ come with a one-run benchmark: [injection-fixtures' docs/benchmarks/framewall.md
   document that's itself teaching prompt-injection concepts. A clean scan
   means nothing obvious tripped, not that the image is safe to feed an
   agent unsupervised.
-- **Tiny text needs to still be OCR-legible to be read exactly.** Below
-  roughly 8-9px, tesseract stops recognizing text at all; framewall then
-  has no line to measure, so extremely tiny text falls through FW-003 even
-  though it's exactly the kind of thing an attacker would want to hide.
-  The heuristic fallback (`--no-ocr`) trades precision for not needing OCR
-  at all, and is the noisiest of the five checks by design.
-- **Some hiding techniques slip past every check.** The detectors are tuned
-  for text an agent reads straight on: low contrast, tiny size, a fake system
-  box, metadata. Text rotated well off-axis, painted into a nearly-transparent
-  alpha layer, or broken up by high-frequency noise can defeat the shape
-  heuristics and read poorly under OCR, so framewall can miss it. It raises the
-  cost of hiding a payload; it doesn't make hiding one impossible. A clean scan
-  is one layer, not a guarantee.
+- **Tiny text needs to survive an upscale to be read exactly.** Below
+  roughly 8-9px, tesseract stops recognizing text at native size. framewall
+  flags thin, text-shaped strips anyway and re-reads them upscaled with a
+  local contrast boost, which recovers a lot of sub-legible text - but text
+  small or degraded enough that even the upscaled pass reads nothing still
+  falls through FW-003. The strip heuristic on its own (`--no-ocr` mode) is
+  the noisiest of the six checks by design.
+- **Some hiding techniques still slip past every check.** 0.2.0 closed the
+  three gaps this section used to name (off-axis rotation, one-shade-off
+  text, high-frequency two-tone camouflage), but others remain: text painted
+  into a nearly-transparent alpha layer is flattened away before the checks
+  run, and text at very low opacity over a noisy background (the corpus's
+  `low-opacity` miss) sits below what OCR can recover from the pixels.
+  framewall raises the cost of hiding a payload; it doesn't make hiding one
+  impossible. A clean scan is one layer, not a guarantee.
 - **This is a scanner, not a sandbox.** It reads pixels and metadata; it
   never executes anything, and it does nothing to stop an agent from acting
   on text it already saw before framewall ran. The right place for this is
@@ -296,13 +342,16 @@ untrusted image regions to the agent at all); no text scanner covers it.
 .venv/bin/pytest
 ```
 
-154 tests. Every test that needs a real tesseract binary is marked and
+Every test that needs a real tesseract binary is marked and
 skips cleanly when one isn't on PATH (`tests/conftest.py::requires_tesseract`) -
 run `tesseract --version` to check whether your machine runs the full
 suite or the heuristic subset. `tests/test_corpus.py` is the floor that
 matters: a labeled set of malicious fixtures that must each be flagged, and
 a benign one that must stay CLEAN, built fresh with Pillow inside the test
-suite itself rather than checked in as opaque binaries. `tests/_images.py`
+suite itself rather than checked in as opaque binaries.
+`tests/test_benchmark_floor.py` holds the second floor: the measured
+injection-fixtures catch rate above, re-asserted in CI so it can't quietly
+slide back. `tests/_images.py`
 is the fixture factory both the tests and `examples/generate.py` share the
 approach with (not the code - `examples/` is deliberately standalone).
 
@@ -316,7 +365,7 @@ coverage only goes up.
 
 ## License
 
-MIT — free to use, change, and ship, commercial or not. See [LICENSE](LICENSE).
+MIT - free to use, change, and ship, commercial or not. See [LICENSE](LICENSE).
 
 ## Support
 

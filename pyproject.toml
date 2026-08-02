@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "framewall"
-version = "0.1.0"
+version = "0.2.0"
 description = "Scan a screenshot for visually-embedded prompt injection before a vision or computer-use agent reads it."
 readme = "README.md"
 license = { text = "MIT" }
