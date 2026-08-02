@@ -186,3 +186,60 @@ def test_one_failing_file_does_not_abort_the_batch(tmp_path, monkeypatch, capsys
     assert len(payload["images"]) == 2
     assert any("error" in img for img in payload["images"])
     assert code == 2  # an unscanned image forces a non-zero exit
+
+
+def test_scan_bound_flags_reach_the_scanner(clean_png, monkeypatch):
+    """--timeout, --max-scan-seconds, and --lang must actually reach
+    scan_image. --timeout in particular was once parsed nowhere and
+    scan_image's ocr_timeout parameter went permanently unused from the
+    CLI."""
+    seen = {}
+
+    def capture(path, use_ocr=True, ocr_timeout=None, max_seconds=None, lang=None):
+        seen.update(ocr_timeout=ocr_timeout, max_seconds=max_seconds, lang=lang)
+        from framewall.finding import ImageResult
+
+        return ImageResult(path=str(path))
+
+    monkeypatch.setattr(cli, "scan_image", capture)
+    cli.main(
+        [
+            "scan", str(clean_png), "--fail-on", "none",
+            "--timeout", "7", "--max-scan-seconds", "11", "--lang", "eng+deu",
+        ]
+    )
+    assert seen == {"ocr_timeout": 7.0, "max_seconds": 11.0, "lang": "eng+deu"}
+
+
+def test_max_scan_seconds_defaults_on(clean_png, monkeypatch):
+    """The whole-image ceiling must be on by default - an unbounded scan is
+    the hang-the-hook attack."""
+    seen = {}
+
+    def capture(path, use_ocr=True, ocr_timeout=None, max_seconds=None, lang=None):
+        seen["max_seconds"] = max_seconds
+        from framewall.finding import ImageResult
+
+        return ImageResult(path=str(path))
+
+    monkeypatch.setattr(cli, "scan_image", capture)
+    cli.main(["scan", str(clean_png), "--fail-on", "none"])
+    from framewall.scanner import DEFAULT_MAX_SCAN_SECONDS
+
+    assert seen["max_seconds"] == DEFAULT_MAX_SCAN_SECONDS
+
+
+def test_lang_env_var_is_honored_and_flag_wins(clean_png, monkeypatch):
+    seen = []
+
+    def capture(path, use_ocr=True, ocr_timeout=None, max_seconds=None, lang=None):
+        seen.append(lang)
+        from framewall.finding import ImageResult
+
+        return ImageResult(path=str(path))
+
+    monkeypatch.setattr(cli, "scan_image", capture)
+    monkeypatch.setenv("FRAMEWALL_TESSERACT_LANG", "deu")
+    cli.main(["scan", str(clean_png), "--fail-on", "none"])
+    cli.main(["scan", str(clean_png), "--fail-on", "none", "--lang", "fra"])
+    assert seen == ["deu", "fra"]

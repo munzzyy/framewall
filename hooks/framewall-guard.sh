@@ -43,10 +43,24 @@ if ! command -v framewall >/dev/null 2>&1 && ! python3 -c 'import framewall' >/d
   exit 0
 fi
 
+# A crafted image must not hang the guard: cap the scan's wall clock.
+# framewall bounds its own OCR work too (--max-scan-seconds); this layer
+# covers a framewall that never returns at all. GNU timeout exits 124 on
+# expiry leaving $out empty, which lands in the no-verdict branch below -
+# ask, or deny under FRAMEWALL_GUARD_FAIL=closed - so a hung scan degrades
+# loudly instead of blocking the agent forever. macOS ships no timeout(1)
+# by default; the scan runs unwrapped there and framewall's own ceiling is
+# the bound.
+if command -v timeout >/dev/null 2>&1; then
+  run_scan() { timeout 30 "$@"; }
+else
+  run_scan() { "$@"; }
+fi
+
 # Keep the scan's own stderr so a failure can be reported instead of swallowed.
 scan_err="$(mktemp)"
-out="$(framewall scan "$file" --json 2>"$scan_err")"
-[ -n "$out" ] || out="$(python3 -m framewall scan "$file" --json 2>"$scan_err")"
+out="$(run_scan framewall scan "$file" --json 2>"$scan_err")"
+[ -n "$out" ] || out="$(run_scan python3 -m framewall scan "$file" --json 2>"$scan_err")"
 reason_note="$(tr '\n' ' ' <"$scan_err" | cut -c1-300)"
 rm -f "$scan_err"
 

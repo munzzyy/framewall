@@ -68,6 +68,8 @@ class ImageResult:
     findings: list = field(default_factory=list)
     ocr_used: bool = False
     ocr_skipped_reason: str = ""
+    notes: list = field(default_factory=list)  # partial-scan notices: OCR work
+    # the region cap or time budget cut short. A truncated scan must say so.
     error: str = ""
     verdict: str = "clean"  # a verdict.Verdict value, set by the scanner
 

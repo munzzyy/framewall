@@ -22,7 +22,7 @@ def _save(img) -> str:
 
 def test_present_but_nonfunctional_ocr_is_reported_not_silent(monkeypatch):
     monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: "/usr/bin/tesseract")
-    monkeypatch.setattr(ocr_mod, "ocr_functional", lambda: False)
+    monkeypatch.setattr(ocr_mod, "ocr_functional", lambda lang=None: False)
     path = _save(_images.clean_screenshot())
     try:
         result = scan_image(path, use_ocr=True)
@@ -35,7 +35,7 @@ def test_present_but_nonfunctional_ocr_is_reported_not_silent(monkeypatch):
 
 def test_missing_binary_still_reads_as_not_on_path(monkeypatch):
     monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: None)
-    monkeypatch.setattr(ocr_mod, "ocr_functional", lambda: False)
+    monkeypatch.setattr(ocr_mod, "ocr_functional", lambda lang=None: False)
     path = _save(_images.clean_screenshot())
     try:
         result = scan_image(path, use_ocr=True)
@@ -46,7 +46,7 @@ def test_missing_binary_still_reads_as_not_on_path(monkeypatch):
 
 
 def test_no_ocr_flag_wins_over_availability(monkeypatch):
-    monkeypatch.setattr(ocr_mod, "ocr_functional", lambda: True)
+    monkeypatch.setattr(ocr_mod, "ocr_functional", lambda lang=None: True)
     path = _save(_images.clean_screenshot())
     try:
         result = scan_image(path, use_ocr=False)

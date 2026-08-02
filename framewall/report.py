@@ -62,6 +62,8 @@ def render_human(results, color: bool = True) -> str:
 
         ocr_note = "used" if r.ocr_used else f"skipped ({r.ocr_skipped_reason})"
         lines.append(f"  {r.width}x{r.height}px   OCR: {ocr_note}")
+        for note in r.notes:
+            lines.append(c("\033[33m", f"  note: {_safe(note)}"))
         lines.append("")
 
         if not r.findings:
@@ -109,6 +111,7 @@ def _image_payload(r):
         "height": r.height,
         "ocr_used": r.ocr_used,
         "ocr_skipped_reason": r.ocr_skipped_reason,
+        "notes": list(r.notes),
         "verdict": r.verdict,
         "findings": [_finding_payload(f) for f in r.findings],
     }

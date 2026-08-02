@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
@@ -35,16 +36,59 @@ class OcrTimeout(Exception):
     scanned instead of silently treating a hung OCR pass as 'no text found'."""
 
 
+class ScanBudget:
+    """Wall-clock budget for one image's OCR work, shared by every pass.
+
+    Without this, the number of tesseract subprocesses an image can demand is
+    bounded only by its content - a busy or crafted screenshot can yield
+    hundreds of candidate regions, each worth a subprocess with its own
+    timeout, which adds up to hours. The budget turns that into a hard
+    ceiling. Passes that get skipped when time runs out are recorded in
+    `notes` so a truncated scan reports itself as truncated, never as a
+    completed scan that found nothing.
+    """
+
+    def __init__(self, seconds: Optional[float] = None):
+        self.deadline = (time.monotonic() + seconds) if seconds else None
+        self.notes: list = []
+
+    def remaining(self) -> Optional[float]:
+        if self.deadline is None:
+            return None
+        return self.deadline - time.monotonic()
+
+    def exhausted(self) -> bool:
+        remaining = self.remaining()
+        return remaining is not None and remaining <= 0
+
+    def clamp(self, timeout: float) -> float:
+        """`timeout` reduced to what is left of the budget."""
+        remaining = self.remaining()
+        if remaining is None:
+            return timeout
+        return max(0.1, min(timeout, remaining))
+
+    def note(self, message: str) -> None:
+        if message not in self.notes:
+            self.notes.append(message)
+
+
 def tesseract_path() -> Optional[str]:
     return shutil.which("tesseract")
 
 
-@lru_cache(maxsize=1)
-def ocr_functional() -> bool:
+@lru_cache(maxsize=8)
+def ocr_functional(lang: Optional[str] = None) -> bool:
     """Whether tesseract can actually read text right now, not just whether the
     binary is on PATH. A tesseract install missing its language data or the tsv
     config runs fine and returns nothing, which for a detector would look like a
-    clean image. Render one known word and confirm it comes back."""
+    clean image. Render one known word and confirm it comes back.
+
+    The probe runs with the same `lang` the scan will use, so selecting a
+    language whose data is missing fails loud here instead of silently reading
+    nothing later. The probe word is ASCII, which every Latin-script pack
+    reads; a non-Latin-only pack fails the probe and the scan says so rather
+    than guessing."""
     tess_bin = tesseract_path()
     if tess_bin is None:
         return False
@@ -54,7 +98,7 @@ def ocr_functional() -> bool:
         probe_path = fh.name
     try:
         probe.save(probe_path)
-        out = _run_tsv(tess_bin, probe_path, timeout=DEFAULT_TIMEOUT)
+        out = _run_tsv(tess_bin, probe_path, timeout=DEFAULT_TIMEOUT, lang=lang)
     except (subprocess.SubprocessError, OSError):
         return False
     finally:
@@ -91,8 +135,12 @@ class Line:
     height: int
 
 
-def _run_tsv(tess_bin: str, image_path: str, timeout: int) -> str:
+def _run_tsv(tess_bin: str, image_path: str, timeout: float, lang: Optional[str] = None) -> str:
     cmd = [tess_bin, image_path, "stdout", "--psm", "3", "tsv"]
+    if lang:
+        # tesseract's own -l syntax, including "eng+deu" multi-language packs.
+        # Options go after the outputbase and before the tsv config name.
+        cmd[3:3] = ["-l", lang]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     return proc.stdout
 
@@ -166,7 +214,7 @@ def _flush_line(current_line: dict, lines: list) -> None:
     )
 
 
-def ocr_image(image: Image.Image, timeout: int = DEFAULT_TIMEOUT):
+def ocr_image(image: Image.Image, timeout: float = DEFAULT_TIMEOUT, lang: Optional[str] = None):
     """Run tesseract on a full Pillow image. Returns (words, lines); both are
     empty if tesseract is missing or fails to run - callers that need to tell
     "no text" apart from "OCR unavailable" should check tesseract_path()
@@ -180,7 +228,7 @@ def ocr_image(image: Image.Image, timeout: int = DEFAULT_TIMEOUT):
     try:
         os.close(fd)
         image.save(tmp_path, format="PNG")
-        output = _run_tsv(tess_bin, tmp_path, timeout)
+        output = _run_tsv(tess_bin, tmp_path, timeout, lang=lang)
         return _parse_tsv(output)
     except subprocess.TimeoutExpired as e:
         raise OcrTimeout(f"tesseract exceeded {timeout}s on this image") from e
@@ -193,7 +241,8 @@ def ocr_image(image: Image.Image, timeout: int = DEFAULT_TIMEOUT):
             pass
 
 
-def ocr_region(image: Image.Image, box, timeout: int = DEFAULT_TIMEOUT, upscale: int = 3):
+def ocr_region(image: Image.Image, box, timeout: float = DEFAULT_TIMEOUT, upscale: int = 3,
+               lang: Optional[str] = None):
     """OCR a cropped region after a local contrast stretch. Returns just the
     word list (line boxes aren't meaningful once a region has been cropped
     and upscaled in isolation).
@@ -204,6 +253,10 @@ def ocr_region(image: Image.Image, box, timeout: int = DEFAULT_TIMEOUT, upscale:
     the small crop, that same few-shade gap becomes the crop's *entire*
     dynamic range, which is what recovers text a human would skim past but a
     vision model - which doesn't care about contrast - reads anyway.
+
+    Raises OcrTimeout when tesseract exceeds `timeout` on the region: the
+    caller decides whether to press on with the other regions, and notes the
+    gap, rather than this function silently reporting the region as empty.
     """
     tess_bin = tesseract_path()
     if tess_bin is None:
@@ -220,12 +273,7 @@ def ocr_region(image: Image.Image, box, timeout: int = DEFAULT_TIMEOUT, upscale:
         factor -= 1
     if factor > 1:
         boosted = boosted.resize((crop.width * factor, crop.height * factor), Image.LANCZOS)
-    # A region timing out shouldn't abort the whole scan - the primary pass
-    # already ran. Treat it as no recovered words for this region.
-    try:
-        words, _lines = ocr_image(boosted, timeout=timeout)
-    except OcrTimeout:
-        return []
+    words, _lines = ocr_image(boosted, timeout=timeout, lang=lang)
     mapped = []
     for w in words:
         mapped.append(

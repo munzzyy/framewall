@@ -1,5 +1,12 @@
 """Per-image scan orchestration: run every detection layer, merge findings,
-compute the verdict."""
+compute the verdict.
+
+Every OCR pass for one image draws on a single wall-clock budget
+(ocr.ScanBudget), so a crafted or just enormous screenshot cannot pin the
+scan for hours by fanning out tesseract subprocesses. Whatever the budget
+cuts short is recorded on the result's notes: a partial scan says it is
+partial instead of passing itself off as a completed clean one.
+"""
 
 from __future__ import annotations
 
@@ -12,8 +19,12 @@ from .checks import contrast, injection_text, metadata, overlay, tiny_text
 from .finding import ImageResult
 from .verdict import compute as compute_verdict
 
+DEFAULT_MAX_SCAN_SECONDS = 30  # whole-image ceiling across every OCR pass;
+# generous for a real scan, fatal for the hang-the-hook attack. 0/None lifts it.
 
-def scan_image(path, use_ocr: bool = True, ocr_timeout=None) -> ImageResult:
+
+def scan_image(path, use_ocr: bool = True, ocr_timeout=None,
+               max_seconds=DEFAULT_MAX_SCAN_SECONDS, lang=None) -> ImageResult:
     path = Path(path)
     result = ImageResult(path=str(path))
 
@@ -23,11 +34,12 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None) -> ImageResult:
         result.error = str(e)
         return result
 
+    budget = ocr_mod.ScanBudget(max_seconds or None)
     findings = []
     for index, frame in frames:
         if index == 0:
             result.width, result.height = frame.size
-        frame_findings = _scan_frame(frame, use_ocr, ocr_timeout, result)
+        frame_findings = _scan_frame(frame, use_ocr, ocr_timeout, result, budget, lang)
         if index > 0:
             # Tag which frame a finding came from so a CLEAN-looking first frame
             # can't hide an attack in a later one of an animated GIF / TIFF.
@@ -39,11 +51,12 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None) -> ImageResult:
 
     findings.sort(key=lambda f: f.sort_key())
     result.findings = findings
+    result.notes = list(budget.notes)
     result.verdict = compute_verdict(findings).value
     return result
 
 
-def _scan_frame(image, use_ocr: bool, ocr_timeout, result) -> list:
+def _scan_frame(image, use_ocr: bool, ocr_timeout, result, budget, lang) -> list:
     gray = imageio.safe_convert(image, "L")
 
     findings = []
@@ -52,11 +65,15 @@ def _scan_frame(image, use_ocr: bool, ocr_timeout, result) -> list:
     findings.extend(overlay.find(gray))
     findings.extend(metadata.find(image))
 
-    if use_ocr and ocr_mod.ocr_functional():
+    if use_ocr and ocr_mod.ocr_functional(lang):
         try:
             low_contrast_regions = [f.region for f in low_contrast_findings if f.region]
             inj_findings, _words, lines = injection_text.find(
-                image, low_contrast_regions=low_contrast_regions, timeout=ocr_timeout
+                image,
+                low_contrast_regions=low_contrast_regions,
+                timeout=ocr_timeout,
+                lang=lang,
+                budget=budget,
             )
         except ocr_mod.OcrTimeout as e:
             # OCR hung on this image. Don't claim a completed OCR pass we didn't
@@ -78,9 +95,12 @@ def _scan_frame(image, use_ocr: bool, ocr_timeout, result) -> list:
         elif ocr_mod.tesseract_path() is None:
             result.ocr_skipped_reason = "tesseract not found on PATH"
         else:
+            hint = (
+                f"missing language data for {lang!r}?" if lang else "missing language data?"
+            )
             result.ocr_skipped_reason = (
-                "tesseract is installed but read no text (missing language data?); "
-                "the injection-text check did not run"
+                f"tesseract is installed but read no text ({hint}); "
+                f"the injection-text check did not run"
             )
         findings.extend(tiny_text.find_heuristic(gray))
 

@@ -197,3 +197,35 @@ def test_sarif_severity_levels():
     r = ImageResult(path="x.png", findings=[med], verdict="suspicious")
     doc = json.loads(render_sarif([r]))
     assert doc["runs"][0]["results"][0]["level"] == "warning"
+
+
+def test_human_report_surfaces_partial_scan_notes():
+    """Work the region cap or time budget cut short must be visible in the
+    human report - a truncated scan that looks complete is a fail-open."""
+    r = _clean_result()
+    r.notes = ["3 candidate region(s) beyond the 24-region OCR cap went unread; the scan is partial"]
+    out = render_human([r], color=False)
+    assert "note:" in out
+    assert "the scan is partial" in out
+
+
+def test_json_report_carries_notes():
+    r = _clean_result()
+    r.notes = ["the scan time budget ran out with 2 flagged region(s) unread; the scan is partial"]
+    payload = json.loads(render_json([r]))
+    assert payload["images"][0]["notes"] == r.notes
+
+
+def test_json_report_notes_default_empty():
+    payload = json.loads(render_json([_clean_result()]))
+    assert payload["images"][0]["notes"] == []
+
+
+def test_human_report_escapes_control_bytes_in_notes():
+    # Notes are built from our own strings today, but they quote counts and
+    # reasons; route them through the same escaping as every other line.
+    r = _clean_result()
+    r.notes = ["evil \x1b[31mnote\x07"]
+    out = render_human([r], color=False)
+    assert "\x1b[31m" not in out
+    assert "\x07" not in out

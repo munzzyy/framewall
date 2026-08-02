@@ -76,16 +76,18 @@ def test_ocr_image_raises_on_timeout(monkeypatch):
         ocr_mod.ocr_image(clean_screenshot())
 
 
-def test_ocr_region_swallows_timeout(monkeypatch):
-    # A region pass timing out is non-fatal - the primary pass already ran -
-    # so ocr_region returns no words rather than aborting the scan.
+def test_ocr_region_raises_timeout(monkeypatch):
+    # A region pass timing out must surface to the caller, who notes the
+    # unread region and carries on - swallowing it here would let a partial
+    # scan pass itself off as a completed one.
     monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: "/usr/bin/tesseract")
 
     def boom(*args, **kwargs):
         raise ocr_mod.OcrTimeout("timed out")
 
     monkeypatch.setattr(ocr_mod, "ocr_image", boom)
-    assert ocr_mod.ocr_region(clean_screenshot(), (0, 0, 100, 40)) == []
+    with pytest.raises(ocr_mod.OcrTimeout):
+        ocr_mod.ocr_region(clean_screenshot(), (0, 0, 100, 40))
 
 
 def test_ocr_region_caps_the_upscale_buffer(monkeypatch):
@@ -94,7 +96,7 @@ def test_ocr_region_caps_the_upscale_buffer(monkeypatch):
     monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: "/usr/bin/tesseract")
     seen = {}
 
-    def capture(image, timeout=ocr_mod.DEFAULT_TIMEOUT):
+    def capture(image, timeout=ocr_mod.DEFAULT_TIMEOUT, lang=None):
         seen["pixels"] = image.width * image.height
         return [], []
 
@@ -186,3 +188,62 @@ def test_injection_text_finding_has_a_located_region():
     assert findings
     located = [f for f in findings if f.region is not None]
     assert located, "expected at least one finding to be located to a word box"
+
+
+def test_run_tsv_passes_lang_to_tesseract(monkeypatch):
+    """--lang must become tesseract's own -l argument, placed among the
+    options (after the outputbase, before the config name), and stay absent
+    entirely when no language was chosen so tesseract's compiled-in default
+    still applies."""
+    seen = []
+
+    class FakeProc:
+        stdout = ""
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        return FakeProc()
+
+    monkeypatch.setattr(ocr_mod.subprocess, "run", fake_run)
+    ocr_mod._run_tsv("/usr/bin/tesseract", "img.png", timeout=5, lang="eng+deu")
+    ocr_mod._run_tsv("/usr/bin/tesseract", "img.png", timeout=5)
+    with_lang, without_lang = seen
+    i = with_lang.index("-l")
+    assert with_lang[i + 1] == "eng+deu"
+    assert i > with_lang.index("stdout")
+    assert i < with_lang.index("tsv")
+    assert "-l" not in without_lang
+
+
+def test_ocr_functional_probes_the_selected_language(monkeypatch):
+    """The fail-loud probe must test the language the scan will actually
+    use: a working eng install with a missing deu pack has to fail the probe
+    for deu, not pass it on eng and then silently read nothing."""
+    seen = []
+
+    def fake_run_tsv(tess_bin, image_path, timeout, lang=None):
+        seen.append(lang)
+        return ""
+
+    monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: "/usr/bin/tesseract")
+    monkeypatch.setattr(ocr_mod, "_run_tsv", fake_run_tsv)
+    ocr_mod.ocr_functional.cache_clear()
+    try:
+        assert ocr_mod.ocr_functional("zzz-fake-lang") is False
+        assert seen == ["zzz-fake-lang"]
+    finally:
+        ocr_mod.ocr_functional.cache_clear()
+
+
+@requires_tesseract
+def test_scan_names_the_missing_language_in_the_skip_reason(tmp_path):
+    """Selecting a language whose data isn't installed must degrade loudly,
+    with the reason naming the language, never scan as if OCR ran."""
+    from framewall.scanner import scan_image
+
+    p = tmp_path / "clean.png"
+    clean_screenshot().save(p)
+    result = scan_image(p, lang="zzz-no-such-lang")
+    assert result.ocr_used is False
+    assert "zzz-no-such-lang" in result.ocr_skipped_reason
+    assert "did not run" in result.ocr_skipped_reason

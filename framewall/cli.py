@@ -8,7 +8,7 @@ import sys
 
 from . import __version__
 from .report import render_human, render_json, render_sarif
-from .scanner import scan_image
+from .scanner import DEFAULT_MAX_SCAN_SECONDS, scan_image
 from .targets import resolve
 from .verdict import Verdict, rank
 
@@ -25,6 +25,28 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("targets", nargs="+", help="image file(s), a directory, or a glob")
     scan.add_argument(
         "--no-ocr", action="store_true", help="skip the tesseract OCR pass; run heuristics only"
+    )
+    scan.add_argument(
+        "--lang",
+        default=None,
+        metavar="LANG",
+        help="tesseract language(s) for the OCR passes, e.g. eng or eng+deu "
+        "(default: the FRAMEWALL_TESSERACT_LANG env var, else tesseract's own default, eng)",
+    )
+    scan.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="per-OCR-pass timeout (default: 20)",
+    )
+    scan.add_argument(
+        "--max-scan-seconds",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="whole-image ceiling across every OCR pass; work past it is skipped "
+        "and reported as a partial scan (default: 30; 0 = no ceiling)",
     )
     out = scan.add_mutually_exclusive_group()
     out.add_argument("--json", action="store_true", help="machine-readable JSON output")
@@ -69,10 +91,22 @@ def main(argv=None) -> int:
         print(f"framewall: warning: no match for {m}", file=sys.stderr)
 
     use_ocr = not args.no_ocr
+    lang = args.lang or os.environ.get("FRAMEWALL_TESSERACT_LANG") or None
+    max_seconds = args.max_scan_seconds
+    if max_seconds is None:
+        max_seconds = DEFAULT_MAX_SCAN_SECONDS
     results = []
     for p in paths:
         try:
-            results.append(scan_image(p, use_ocr=use_ocr))
+            results.append(
+                scan_image(
+                    p,
+                    use_ocr=use_ocr,
+                    ocr_timeout=args.timeout,
+                    max_seconds=max_seconds,
+                    lang=lang,
+                )
+            )
         except Exception as e:
             # One hostile or malformed file must not abort a whole batch and
             # leave its siblings unscanned. Record the failure as an error
