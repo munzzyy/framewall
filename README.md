@@ -165,6 +165,21 @@ the scan will actually use: pick one with `--lang deu` (or
 `FRAMEWALL_TESSERACT_LANG=deu` for the hook), and if that pack is missing
 the skip reason names it.
 
+Run `framewall doctor` on a new machine to check this before it costs you a
+scan: it prints the tesseract binary path, its version, the language packs
+it can see, and whether the probe word above actually comes back for the
+language you'd use, then exits 0 or 1 accordingly.
+
+```
+$ framewall doctor
+tesseract:  /usr/bin/tesseract
+version:    tesseract 5.5.3
+languages:  afr, osd
+probe lang: tesseract default (eng)
+OCR:        tesseract cannot read text on this machine (missing or no language data)
+fix:        install the language pack, e.g. apt install tesseract-ocr-eng
+```
+
 ### In CI
 
 ```yaml

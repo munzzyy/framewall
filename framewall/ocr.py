@@ -109,6 +109,85 @@ def ocr_functional(lang: Optional[str] = None) -> bool:
     return any(row.split("\t")[-1].strip() for row in out.splitlines()[1:])
 
 
+def tesseract_version() -> Optional[str]:
+    """First line of `tesseract --version`, or None if the binary is missing
+    or refuses to run. tesseract prints its version banner to stdout on some
+    builds and stderr on others, so both are checked."""
+    tess_bin = tesseract_path()
+    if tess_bin is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [tess_bin, "--version"], capture_output=True, text=True,
+            timeout=DEFAULT_TIMEOUT, check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    for line in (proc.stdout + proc.stderr).splitlines():
+        if line.strip():
+            return line.strip()
+    return None
+
+
+def list_languages() -> list:
+    """Language packs tesseract can see, from `--list-langs`. Empty if the
+    binary is missing or the call fails - callers should not treat that as
+    "no languages installed", just as "could not ask"."""
+    tess_bin = tesseract_path()
+    if tess_bin is None:
+        return []
+    try:
+        proc = subprocess.run(
+            [tess_bin, "--list-langs"], capture_output=True, text=True,
+            timeout=DEFAULT_TIMEOUT, check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+    # First line is a header ("List of available languages (N):"), not a lang.
+    return [line.strip() for line in proc.stdout.splitlines()[1:] if line.strip()]
+
+
+# The same wording tests/conftest.py's requires_tesseract skip reason uses, so
+# a scan that silently degraded and a `doctor` run that explains why say the
+# identical thing about the identical condition.
+NO_LANGUAGE_DATA_REASON = "tesseract cannot read text on this machine (missing or no language data)"
+
+
+@dataclass(frozen=True)
+class Diagnosis:
+    """Snapshot of whether this machine's tesseract install can actually do
+    OCR for framewall, for the `framewall doctor` subcommand. Runs the same
+    checks scan_image already runs internally (tesseract_path, ocr_functional)
+    so a user gets that verdict up front instead of discovering a silently
+    degraded scan later - which is exactly how this machine's missing
+    language pack went unnoticed until pytest -rs was run by hand."""
+
+    path: Optional[str]
+    version: Optional[str]
+    languages: list
+    lang_requested: Optional[str]
+    functional: bool
+    reason: Optional[str]  # None when functional
+
+
+def diagnose(lang: Optional[str] = None) -> Diagnosis:
+    path = tesseract_path()
+    if path is None:
+        return Diagnosis(
+            path=None, version=None, languages=[], lang_requested=lang,
+            functional=False, reason="tesseract not found on PATH",
+        )
+    functional = ocr_functional(lang)
+    return Diagnosis(
+        path=path,
+        version=tesseract_version(),
+        languages=list_languages(),
+        lang_requested=lang,
+        functional=functional,
+        reason=None if functional else NO_LANGUAGE_DATA_REASON,
+    )
+
+
 @dataclass(frozen=True)
 class Word:
     text: str

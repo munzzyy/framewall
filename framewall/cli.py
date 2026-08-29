@@ -7,6 +7,7 @@ import os
 import sys
 
 from . import __version__
+from .ocr import diagnose
 from .report import render_human, render_json, render_sarif
 from .scanner import DEFAULT_MAX_SCAN_SECONDS, scan_image
 from .targets import resolve
@@ -59,6 +60,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan.add_argument("--no-color", action="store_true", help="disable ANSI color")
     scan.add_argument("--quiet", action="store_true", help="only print one verdict line per image")
+
+    doctor = sub.add_parser(
+        "doctor", help="check whether this machine's tesseract install can actually do OCR"
+    )
+    doctor.add_argument(
+        "--lang",
+        default=None,
+        metavar="LANG",
+        help="tesseract language(s) to probe, e.g. eng or eng+deu "
+        "(default: the FRAMEWALL_TESSERACT_LANG env var, else tesseract's own default, eng)",
+    )
     return p
 
 
@@ -76,8 +88,29 @@ def _fail_threshold(value: str):
         raise SystemExit(2)
 
 
+def _run_doctor(args) -> int:
+    lang = args.lang or os.environ.get("FRAMEWALL_TESSERACT_LANG") or None
+    d = diagnose(lang)
+    if d.path is None:
+        print(f"tesseract:  {d.reason}")
+        print("OCR:        unavailable; framewall will run heuristic-only")
+        return 1
+    print(f"tesseract:  {d.path}")
+    print(f"version:    {d.version or 'unknown (--version gave nothing usable)'}")
+    print(f"languages:  {', '.join(d.languages) if d.languages else 'none detected'}")
+    print(f"probe lang: {d.lang_requested or 'tesseract default (eng)'}")
+    if d.functional:
+        print("OCR:        working; the injection-text check will run on scans")
+        return 0
+    print(f"OCR:        {d.reason}")
+    print("fix:        install the language pack, e.g. apt install tesseract-ocr-eng")
+    return 1
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "doctor":
+        return _run_doctor(args)
     if args.command != "scan":
         return 2
 
