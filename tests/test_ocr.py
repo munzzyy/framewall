@@ -476,5 +476,5 @@ def test_hostile_chunk_name_does_not_crash_the_ocr_pass(monkeypatch, tmp_path, k
     assert any("png:Comment" in f.title for f in fw005)
     assert any(f"png:{key}" in f.title and f.snippet == "notacolor" for f in fw005)
 
-    frames, _meta = imageio.load(p)
+    frames = imageio.load(p).frames
     assert ocr_mod.ocr_region(frames[0][1], (260, 385, 900, 435)) == []

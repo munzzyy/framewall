@@ -13,8 +13,6 @@ look", not a verdict on its own - dense real UI is exactly what trips it.
 
 from __future__ import annotations
 
-from PIL import ImageStat
-
 from .. import grid
 from ..finding import Finding, Region, Severity
 
@@ -46,20 +44,19 @@ def _fill_regions(gray_image):
     so it tracks one fill color rather than sweeping across a whole
     multi-panel UI."""
     width, height = gray_image.size
-    cols, rows = grid.block_grid(width, height, FLAT_BLOCK)
+    stats = grid.block_stats(gray_image, FLAT_BLOCK)
+    cols, rows = stats.cols, stats.rows
     mean = [[0.0] * cols for _ in range(rows)]
     flat = [[False] * cols for _ in range(rows)]
     detailed = [[False] * cols for _ in range(rows)]
-    for r in range(rows):
-        for c in range(cols):
-            box = grid.block_box(c, r, FLAT_BLOCK, width, height)
-            stat = ImageStat.Stat(gray_image.crop(box))
-            stddev = stat.stddev[0]
-            mean[r][c] = stat.mean[0]
-            if stddev <= FLAT_STDDEV_MAX:
-                flat[r][c] = True
-            elif stddev >= DETAIL_STDDEV_MIN:
-                detailed[r][c] = True
+    for i in range(cols * rows):
+        r, c = divmod(i, cols)
+        stddev = stats.stddev(i)
+        mean[r][c] = stats.mean(i)
+        if stddev <= FLAT_STDDEV_MAX:
+            flat[r][c] = True
+        elif stddev >= DETAIL_STDDEV_MIN:
+            detailed[r][c] = True
 
     seen = [[False] * cols for _ in range(rows)]
     regions = []

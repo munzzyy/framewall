@@ -46,8 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         metavar="SECONDS",
-        help="whole-image ceiling across every OCR pass; work past it is skipped "
-        "and reported as a partial scan (default: 30; 0 = no ceiling)",
+        help="whole-image ceiling across every OCR pass and frame; work past it is "
+        "skipped and reported as a partial scan (default: 30; 0 = no ceiling)",
     )
     out = scan.add_mutually_exclusive_group()
     out.add_argument("--json", action="store_true", help="machine-readable JSON output")

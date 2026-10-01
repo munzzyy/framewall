@@ -70,3 +70,37 @@ def test_large_hidden_block_is_never_high_severity():
 def test_delta_near_default_max_contrast_is_still_caught():
     gray = low_contrast_injection(delta=28).convert("L")
     assert contrast.find(gray)
+
+
+def _reference_find(gray_image):
+    """The per-block crop loop find() used before it moved to
+    grid.block_stats: one crop, getextrema and ImageStat per block."""
+    from PIL import ImageStat
+
+    from framewall import grid
+
+    width, height = gray_image.size
+    cols, rows = grid.block_grid(width, height, contrast.BLOCK)
+    flagged = [[False] * cols for _ in range(rows)]
+    for r in range(rows):
+        for c in range(cols):
+            crop = gray_image.crop(grid.block_box(c, r, contrast.BLOCK, width, height))
+            lo, hi = crop.getextrema()
+            if hi - lo == 0:
+                continue
+            stddev = ImageStat.Stat(crop).stddev[0]
+            if stddev >= contrast.MIN_STDDEV and hi - lo <= contrast.MAX_LOCAL_CONTRAST:
+                flagged[r][c] = True
+    return [
+        (left, top, w, h)
+        for left, top, w, h, n in grid.group_flagged(flagged, cols, rows, contrast.BLOCK, width, height)
+        if n >= contrast.MIN_REGION_BLOCKS and w >= contrast.MIN_REGION_WIDTH
+    ]
+
+
+def test_find_matches_the_per_block_reference_exactly():
+    from tests._images import parity_set
+
+    for name, gray in parity_set():
+        got = [(f.region.left, f.region.top, f.region.width, f.region.height) for f in contrast.find(gray)]
+        assert got == _reference_find(gray), name

@@ -12,8 +12,6 @@ a local contrast boost to try to read them.
 
 from __future__ import annotations
 
-from PIL import ImageStat
-
 from .. import grid
 from ..finding import Finding, Region, Severity
 
@@ -30,19 +28,12 @@ MIN_REGION_WIDTH = BLOCK * 3  # a single-column seam between two flat UI panels
 
 def find(gray_image) -> list:
     width, height = gray_image.size
-    cols, rows = grid.block_grid(width, height, BLOCK)
+    stats = grid.block_stats(gray_image, BLOCK, extrema=True)
+    cols, rows = stats.cols, stats.rows
     flagged = [[False] * cols for _ in range(rows)]
-    for r in range(rows):
-        for c in range(cols):
-            box = grid.block_box(c, r, BLOCK, width, height)
-            crop = gray_image.crop(box)
-            lo, hi = crop.getextrema()
-            contrast = hi - lo
-            if contrast == 0:
-                continue
-            stddev = ImageStat.Stat(crop).stddev[0]
-            if stddev >= MIN_STDDEV and contrast <= MAX_LOCAL_CONTRAST:
-                flagged[r][c] = True
+    for i, (lo, hi) in enumerate(zip(stats.lo, stats.hi)):
+        if 0 < hi - lo <= MAX_LOCAL_CONTRAST and stats.stddev(i) >= MIN_STDDEV:
+            flagged[i // cols][i % cols] = True
 
     findings = []
     for left, top, w, h, n_blocks in grid.group_flagged(flagged, cols, rows, BLOCK, width, height):

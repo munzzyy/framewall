@@ -121,7 +121,7 @@ framewall scan "./screenshots/*.png"         # a glob (quoted so it works on Win
 framewall scan a.png b.png c.png             # multiple targets
 framewall scan screenshot.png --no-ocr       # force heuristic-only, even if tesseract is installed
 framewall scan screenshot.png --lang eng+deu # tesseract language(s); FRAMEWALL_TESSERACT_LANG works too
-framewall scan huge.png --max-scan-seconds 60  # whole-image OCR ceiling (default 30; 0 lifts it)
+framewall scan huge.png --max-scan-seconds 60  # whole-image time ceiling (default 30; 0 lifts it)
 ```
 
 Every OCR pass for one image draws on a single wall-clock budget
@@ -129,9 +129,11 @@ Every OCR pass for one image draws on a single wall-clock budget
 get their own OCR pass is capped. Without those bounds, one busy or crafted
 screenshot can demand hundreds of tesseract subprocesses and stall a
 synchronous caller for hours - which would turn the hook below into a
-denial-of-service target. Anything the bounds cut short is reported as a
-`note:` line (and a `notes` array in `--json`) saying the scan is partial,
-so a truncated scan never passes itself off as a completed clean one.
+denial-of-service target. An animated GIF or multi-page TIFF is scanned
+frame by frame on that same budget, up to 32 frames. Anything the bounds cut
+short is reported as a `note:` line (and a `notes` array in `--json`) saying
+the scan is partial, so a truncated scan never passes itself off as a
+completed clean one.
 
 ### Two modes
 

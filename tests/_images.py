@@ -168,3 +168,39 @@ def edge_camouflage(text: str = INJECTION_TEXT) -> Image.Image:
 
 def solid_color(width: int = 200, height: int = 200, color=(255, 255, 255)) -> Image.Image:
     return Image.new("RGB", (width, height), color)
+
+
+def parity_set():
+    """(name, gray image) for every fixture above, the committed examples,
+    and odd-sized crops whose right and bottom edges cut through blocks.
+    Holds a rewritten check to the exact output of the code it replaced."""
+    import random
+    from pathlib import Path
+
+    images = {
+        "clean": clean_screenshot(),
+        "low-contrast": low_contrast_injection(),
+        "low-contrast-28": low_contrast_injection(delta=28),
+        "paragraph": low_contrast_paragraph(),
+        "overlay": fake_system_overlay(),
+        "tiny": tiny_text_image(),
+        "white-on-white": white_on_white_injection(),
+        "rotated": rotated_injection(),
+        "tiny-corner": tiny_corner_injection(),
+        "camouflage": edge_camouflage(),
+        "solid": solid_color(),
+    }
+    examples = Path(__file__).resolve().parent.parent / "examples"
+    for path in sorted(examples.glob("*.png")):
+        images[path.name] = Image.open(path).convert("RGB")
+    rng = random.Random(7)
+    noise = Image.new("L", (203, 157))
+    noise.putdata([rng.randrange(256) if rng.random() < 0.5 else 200 for _ in range(203 * 157)])
+    images["noise"] = noise
+    out = []
+    for name, img in images.items():
+        gray = img.convert("L")
+        out.append((name, gray))
+        if gray.width > 40 and gray.height > 40:
+            out.append((f"{name}-odd", gray.crop((3, 5, gray.width - 2, gray.height - 7))))
+    return out

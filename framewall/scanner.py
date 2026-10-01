@@ -3,9 +3,10 @@ compute the verdict.
 
 Every OCR pass for one image draws on a single wall-clock budget
 (ocr.ScanBudget), so a crafted or just enormous screenshot cannot pin the
-scan for hours by fanning out tesseract subprocesses. Whatever the budget
-cuts short is recorded on the result's notes: a partial scan says it is
-partial instead of passing itself off as a completed clean one.
+scan for hours by fanning out tesseract subprocesses. The same budget is
+checked between frames of an animated GIF or multi-page TIFF. Whatever the
+budget cuts short is recorded on the result's notes: a partial scan says it
+is partial instead of passing itself off as a completed clean one.
 """
 
 from __future__ import annotations
@@ -32,15 +33,26 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None,
     result = ImageResult(path=str(path))
 
     try:
-        frames, meta = imageio.load(path)
+        frames, meta, truncated = imageio.load(path)
     except imageio.ImageError as e:
         result.error = str(e)
         return result
 
     budget = ocr_mod.ScanBudget(max_seconds or None)
+    if truncated:
+        budget.note(
+            f"only the first {imageio.MAX_FRAMES} frames were scanned; the scan is partial"
+        )
     findings = metadata.find(meta)
     ocr_gaps = []  # (frame index, why OCR did not cover it)
+    scanned = 0
     for index, frame in frames:
+        if index > 0 and budget.exhausted():
+            last = frames[-1][0]
+            which = f"frame {index}" if index == last else f"frames {index}-{last}"
+            budget.note(f"the scan time budget ran out; {which} not scanned; the scan is partial")
+            break
+        scanned += 1
         if index == 0:
             result.width, result.height = frame.size
         frame_findings, skipped = _scan_frame(frame, use_ocr, ocr_timeout, budget, lang)
@@ -59,7 +71,7 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None,
     result.ocr_used = not ocr_gaps
     if ocr_gaps:
         index, reason = ocr_gaps[0]
-        if len(ocr_gaps) < len(frames):
+        if len(ocr_gaps) < scanned:
             reason = f"frame {index}: {reason}"
         result.ocr_skipped_reason = reason
 

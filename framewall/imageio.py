@@ -88,6 +88,7 @@ def load_image(path) -> Image.Image:
 class Loaded(NamedTuple):
     frames: list  # (index, rgb_frame) pairs
     metadata: Image.Image  # 1x1 stand-in carrying the file's info dict
+    truncated: bool = False  # the file has frames past MAX_FRAMES
 
 
 def load(path) -> Loaded:
@@ -110,7 +111,7 @@ def load(path) -> Loaded:
     frames = []
     for index, frame in enumerate(ImageSequence.Iterator(img)):
         if index >= MAX_FRAMES:
-            break
+            return Loaded(frames, metadata, truncated=True)
         rgb = safe_convert(frame, "RGB")
         rgb.info = {}
         frames.append((index, rgb))

@@ -125,3 +125,41 @@ def test_normal_scan_carries_no_notes(tmp_path):
     _images.clean_screenshot().save(p)
     result = scan_image(p, use_ocr=False)
     assert result.notes == []
+
+
+def _three_frame_gif(tmp_path):
+    from PIL import Image
+
+    p = tmp_path / "three.gif"
+    frames = [Image.new("RGB", (64, 48), c) for c in ("white", "black", "white")]
+    frames[0].save(p, save_all=True, append_images=frames[1:])
+    return p
+
+
+def test_frames_past_the_budget_are_noted_not_scanned(tmp_path, monkeypatch):
+    from framewall import scanner
+
+    seen = []
+    real = scanner._scan_frame
+
+    def spy(image, *args):
+        seen.append(image.getpixel((0, 0)))
+        return real(image, *args)
+
+    monkeypatch.setattr(scanner, "_scan_frame", spy)
+    result = scan_image(_three_frame_gif(tmp_path), use_ocr=False, max_seconds=1e-9)
+    assert len(seen) == 1
+    assert any("frames 1-2 not scanned" in n and "partial" in n for n in result.notes)
+
+
+def test_every_frame_is_scanned_within_the_budget(tmp_path):
+    result = scan_image(_three_frame_gif(tmp_path), use_ocr=False)
+    assert result.notes == []
+
+
+def test_frames_past_the_frame_cap_are_noted(tmp_path, monkeypatch):
+    from framewall import imageio
+
+    monkeypatch.setattr(imageio, "MAX_FRAMES", 2)
+    result = scan_image(_three_frame_gif(tmp_path), use_ocr=False)
+    assert any("only the first 2 frames" in n for n in result.notes)
