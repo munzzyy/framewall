@@ -73,6 +73,11 @@ class ImageResult:
     error: str = ""
     verdict: str = "clean"  # a verdict.Verdict value, set by the scanner
 
+    @property
+    def partial(self) -> bool:
+        """A verdict reached without OCR, or with work cut short."""
+        return not self.error and (not self.ocr_used or bool(self.notes))
+
     def counts(self) -> dict:
         out = {s: 0 for s in Severity}
         for f in self.findings:

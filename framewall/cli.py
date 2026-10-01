@@ -58,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="VERDICT",
         help="exit non-zero at or above this verdict (suspicious|dangerous|none; default: suspicious)",
     )
+    scan.add_argument(
+        "--require-ocr",
+        action="store_true",
+        help="exit 2 when any image was scanned without OCR or only in part "
+        "(tesseract or its language data missing, a timeout, the time budget)",
+    )
     scan.add_argument("--no-color", action="store_true", help="disable ANSI color")
     scan.add_argument("--quiet", action="store_true", help="only print one verdict line per image")
 
@@ -108,11 +114,14 @@ def _run_doctor(args) -> int:
 
 
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if args.command == "doctor":
         return _run_doctor(args)
     if args.command != "scan":
         return 2
+    if args.require_ocr and args.no_ocr:
+        parser.error("--require-ocr and --no-ocr contradict each other")
 
     threshold = _fail_threshold(args.fail_on)
 
@@ -161,6 +170,15 @@ def main(argv=None) -> int:
 
     if any(r.error for r in results):
         return 2
+    if args.require_ocr:
+        partial = [r for r in results if r.partial]
+        if partial:
+            print(
+                f"framewall: --require-ocr: {len(partial)} of {len(results)} image(s) "
+                f"were not fully scanned with OCR (see the report)",
+                file=sys.stderr,
+            )
+            return 2
     if threshold is None:
         return 0
     worst_rank = max((rank(Verdict(r.verdict)) for r in results), default=-1)

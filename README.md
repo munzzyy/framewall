@@ -185,12 +185,18 @@ fix:        install the language pack, e.g. apt install tesseract-ocr-eng
 ### In CI
 
 ```yaml
+- run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
 - run: pip install git+https://github.com/munzzyy/framewall
-- run: framewall scan ./agent-screenshots --fail-on suspicious
+- run: framewall scan ./agent-screenshots --fail-on suspicious --require-ocr
 ```
 
 (framewall is not on PyPI yet; pin the install to a tag or commit if you
 want reproducible CI.)
+
+Without tesseract, framewall falls back to the heuristics and a scan can
+still pass, so a runner that lost its OCR would keep CI green while the core
+detector never ran. `--require-ocr` makes that exit 2: any image scanned
+without OCR, or cut short by the time budget, fails the step.
 
 `--fail-on` takes `suspicious`, `dangerous`, or `none` (default
 `suspicious`). It also speaks SARIF for the GitHub Security tab:
@@ -264,9 +270,14 @@ from every screenshot.
 ### Output formats
 
 - default - a colored, per-finding human report
-- `--json` - every finding, region, and the OCR-availability flags, for scripting
-- `--sarif` - SARIF 2.1.0
-- `--quiet` - one verdict line per image (`DANGEROUS  path/to/file.png`)
+- `--json` - every finding, region, and the OCR-availability flags, for scripting.
+  Each image's `ocr_used` and `notes` say whether its scan was complete; the
+  top-level `tesseract_available` only says the binary is on PATH.
+- `--sarif` - SARIF 2.1.0. An image scanned without OCR or only in part gets a
+  warning in `invocations[0].toolExecutionNotifications`, and file URIs are
+  relative to the working directory when the image is under it.
+- `--quiet` - one verdict line per image (`DANGEROUS  path/to/file.png`), with
+  `(no OCR)` or `(partial)` after the verdict when the scan was degraded
 
 ## What it checks
 
@@ -367,7 +378,8 @@ untrusted image regions to the agent at all); no text scanner covers it.
 - `0` - scan completed, worst verdict stayed below `--fail-on`
 - `1` - scan completed, worst verdict reached `--fail-on`
 - `2` - usage error: bad arguments, no target matched, or an image couldn't
-  be read at all (corrupt file, or over the size cap)
+  be read at all (corrupt file, or over the size cap). With `--require-ocr`,
+  also any image scanned without OCR or only in part.
 
 ## Tests
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from . import __version__
 from .finding import Severity
@@ -102,16 +103,29 @@ def render_human(results, color: bool = True) -> str:
 
 def render_quiet(results) -> str:
     """One line per image. Scripts split this on lines, so a path holding a
-    newline must not add one."""
-    return "\n".join(
-        f"{'ERROR' if r.error else r.verdict.upper()}  {_safe(r.path)}" for r in results
-    )
+    newline must not add one. A verdict from a degraded scan says so:
+    "CLEAN (no OCR)  shot.png"."""
+    return "\n".join(f"{_quiet_label(r)}  {_safe(r.path)}" for r in results)
+
+
+def _quiet_label(r) -> str:
+    if r.error:
+        return "ERROR"
+    gaps = []
+    if not r.ocr_used:
+        gaps.append("no OCR")
+    if r.notes:
+        gaps.append("partial")
+    label = r.verdict.upper()
+    return f"{label} ({', '.join(gaps)})" if gaps else label
 
 
 def render_json(results) -> str:
     payload = {
         "tool": "framewall",
         "version": __version__,
+        # The binary is on PATH, nothing more; each image's ocr_used says
+        # whether OCR actually ran on it.
         "tesseract_available": tesseract_path() is not None,
         "images": [_image_payload(r) for r in results],
     }
@@ -153,6 +167,10 @@ _SEC_SEVERITY = {Severity.HIGH: "8.0", Severity.MEDIUM: "5.0", Severity.LOW: "3.
 # an unreadable or oversized image as if it had passed. Surface each as an
 # error-level result under this synthetic rule.
 _SCAN_ERROR_RULE = "framewall-scan-error"
+# A verdict from a degraded scan is still a verdict, so it isn't a result,
+# but a reader of the SARIF alone has to be able to tell.
+_OCR_SKIPPED = "framewall-ocr-skipped"
+_PARTIAL_SCAN = "framewall-partial-scan"
 
 
 def render_sarif(results) -> str:
@@ -162,16 +180,26 @@ def render_sarif(results) -> str:
         rules.append({"id": _SCAN_ERROR_RULE, "name": _SCAN_ERROR_RULE})
 
     sarif_results = []
+    notifications = []
     for r in results:
+        location = [{"physicalLocation": {"artifactLocation": {"uri": _sarif_uri(r.path)}}}]
+        if not r.error and not r.ocr_used:
+            notifications.append(_notification(
+                _OCR_SKIPPED,
+                f"OCR did not run on this image ({r.ocr_skipped_reason}), so the "
+                f"injection-text check (FW-001) did not read it",
+                location,
+            ))
+        if not r.error:
+            for note in r.notes:
+                notifications.append(_notification(_PARTIAL_SCAN, note, location))
         if r.error:
             sarif_results.append(
                 {
                     "ruleId": _SCAN_ERROR_RULE,
                     "level": "error",
                     "message": {"text": f"framewall could not scan this image: {r.error}"},
-                    "locations": [
-                        {"physicalLocation": {"artifactLocation": {"uri": r.path}}}
-                    ],
+                    "locations": location,
                 }
             )
             continue
@@ -185,9 +213,7 @@ def render_sarif(results) -> str:
                     "level": _SARIF_LEVEL[f.severity],
                     "message": {"text": f"{f.title}: {f.detail}"},
                     "properties": props,
-                    "locations": [
-                        {"physicalLocation": {"artifactLocation": {"uri": r.path}}}
-                    ],
+                    "locations": location,
                 }
             )
 
@@ -204,8 +230,36 @@ def render_sarif(results) -> str:
                         "rules": rules,
                     }
                 },
+                "invocations": [
+                    {
+                        "executionSuccessful": True,
+                        "toolExecutionNotifications": notifications,
+                    }
+                ],
                 "results": sarif_results,
             }
         ],
     }
     return json.dumps(doc, indent=2)
+
+
+def _sarif_uri(path) -> str:
+    """Relative to the working directory when the file sits under it, which
+    is how code scanning maps a result to a file in the repo. Otherwise a
+    file:// URI, since a bare absolute path (or a Windows one) isn't one."""
+    p = Path(path)
+    if not p.is_absolute():
+        return p.as_posix()
+    try:
+        return p.relative_to(Path.cwd()).as_posix()
+    except ValueError:
+        return p.as_uri()
+
+
+def _notification(rule_id, text, locations) -> dict:
+    return {
+        "descriptor": {"id": rule_id},
+        "level": "warning",
+        "message": {"text": text},
+        "locations": locations,
+    }

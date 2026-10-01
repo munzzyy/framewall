@@ -254,3 +254,50 @@ def test_lang_env_var_is_honored_and_flag_wins(clean_png, monkeypatch):
     cli.main(["scan", str(clean_png), "--fail-on", "none"])
     cli.main(["scan", str(clean_png), "--fail-on", "none", "--lang", "fra"])
     assert seen == ["deu", "fra"]
+
+
+def _fake_scan(monkeypatch, **fields):
+    from framewall.finding import ImageResult
+
+    def scan(path, *a, **k):
+        return ImageResult(path=str(path), width=10, height=10, **fields)
+
+    monkeypatch.setattr(cli, "scan_image", scan)
+
+
+DEGRADED = {
+    "no OCR": dict(ocr_used=False, ocr_skipped_reason="tesseract not found on PATH"),
+    "partial": dict(ocr_used=True, notes=["the scan time budget ran out; the scan is partial"]),
+}
+
+
+@pytest.mark.parametrize("case", sorted(DEGRADED))
+def test_require_ocr_exits_two_on_a_degraded_scan(clean_png, monkeypatch, capsys, case):
+    _fake_scan(monkeypatch, **DEGRADED[case])
+    assert cli.main(["scan", str(clean_png), "--fail-on", "none"]) == 0
+    assert cli.main(["scan", str(clean_png), "--require-ocr", "--fail-on", "none"]) == 2
+    assert "--require-ocr" in capsys.readouterr().err
+
+
+def test_require_ocr_passes_a_full_scan(clean_png, monkeypatch):
+    _fake_scan(monkeypatch, ocr_used=True)
+    assert cli.main(["scan", str(clean_png), "--require-ocr"]) == 0
+
+
+def test_require_ocr_and_no_ocr_is_a_usage_error(clean_png, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["scan", str(clean_png), "--require-ocr", "--no-ocr"])
+    assert exc.value.code == 2
+    assert "contradict" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("fields,label", [
+    (dict(ocr_used=True), "CLEAN  "),
+    (DEGRADED["no OCR"], "CLEAN (no OCR)  "),
+    (DEGRADED["partial"], "CLEAN (partial)  "),
+    (dict(DEGRADED["no OCR"], notes=["cut short"]), "CLEAN (no OCR, partial)  "),
+])
+def test_quiet_marks_a_degraded_scan(clean_png, monkeypatch, capsys, fields, label):
+    _fake_scan(monkeypatch, **fields)
+    cli.main(["scan", str(clean_png), "--quiet", "--fail-on", "none"])
+    assert capsys.readouterr().out.startswith(label)

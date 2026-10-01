@@ -257,3 +257,39 @@ def test_human_report_escapes_the_ocr_skip_reason():
     out = render_human([r], color=False)
     assert "\x1b" not in out
     assert not any(line.startswith("CLEAN") for line in out.splitlines())
+
+
+def _notifications(results):
+    doc = json.loads(render_sarif(results))
+    return doc["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+
+
+def test_sarif_has_no_notifications_for_full_scans():
+    assert _notifications([_clean_result(), _dangerous_result(), _error_result()]) == []
+
+
+def test_sarif_notes_an_image_scanned_without_ocr():
+    r = ImageResult(path="shot.png", width=10, height=10, ocr_used=False,
+                    ocr_skipped_reason="tesseract not found on PATH", verdict="clean")
+    [n] = _notifications([r])
+    assert n["descriptor"]["id"] == "framewall-ocr-skipped"
+    assert n["level"] == "warning"
+    assert "tesseract not found" in n["message"]["text"]
+    assert n["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "shot.png"
+
+
+def test_sarif_notes_each_partial_scan_note():
+    r = _clean_result()
+    r.notes = ["first note; the scan is partial", "second note; the scan is partial"]
+    notes = _notifications([r])
+    assert [n["descriptor"]["id"] for n in notes] == ["framewall-partial-scan"] * 2
+    assert [n["message"]["text"] for n in notes] == r.notes
+
+
+def test_sarif_uri_is_relative_under_the_working_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    inside = tmp_path / "shots" / "a.png"
+    outside = tmp_path.parent / "elsewhere.png"
+    doc = json.loads(render_sarif([_dangerous_result(str(inside)), _error_result(str(outside))]))
+    uris = [r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] for r in doc["runs"][0]["results"]]
+    assert uris == ["shots/a.png", outside.as_uri()]
