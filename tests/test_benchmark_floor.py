@@ -1,12 +1,13 @@
 """The injection-fixtures catch-rate floor.
 
 The sibling corpus (https://github.com/munzzyy/injection-fixtures) ships
-eight visual-injection techniques and four benign controls; the README's
-"Measured against a known-payload corpus" section publishes framewall's
-measured rate against them. This test is that number's regression guard: it
-renders the same eight techniques through injection-fixtures' own API and
-asserts every technique framewall is known to catch is still caught, and
-that no new benign control starts false-positiving.
+fourteen visual-injection techniques and five benign controls as of 0.2.0;
+the README's "Measured against a known-payload corpus" section publishes
+framewall's measured rate against them. This test is that number's
+regression guard: it renders the techniques through injection-fixtures' own
+API and asserts every technique framewall is known to flag is still flagged,
+every one it is known to call DANGEROUS still is, and no new benign control
+starts false-positiving.
 
 Runs when the `injection_fixtures` package is importable (CI installs it
 pinned on the Linux job; `pip install
@@ -15,9 +16,9 @@ can read text - the published numbers are OCR-on numbers. Anywhere else it
 skips, visibly. The module's constants import everywhere regardless, because
 tests/test_docs.py checks the README's published claim against them.
 
-The floor may go up when a new technique is caught. It must never come back
-down: a detector change that starts missing `white-on-white` again has to
-fail here, not silently ship.
+The floors may go up when a new technique is caught. They must never come
+back down: a detector change that starts missing `white-on-white` again has
+to fail here, not silently ship.
 """
 
 from __future__ import annotations
@@ -28,9 +29,8 @@ from framewall.scanner import scan_image
 from framewall.verdict import Verdict
 from tests.conftest import requires_tesseract
 
-# The eight techniques of injection-fixtures 0.1.0, the corpus the README's
-# number is measured against. Newer corpus versions may add techniques; those
-# extend the benchmark, not this floor.
+# The fourteen techniques of injection-fixtures 0.2.0 (commit 039c0e3d), the
+# corpus the README's number is measured against and CI pins.
 TECHNIQUES = [
     "low-contrast",
     "white-on-white",
@@ -40,17 +40,41 @@ TECHNIQUES = [
     "caption-chrome",
     "low-opacity",
     "rotated-skew",
+    "homoglyph",
+    "bidi-override",
+    "split-payload",
+    "color-camouflage",
+    "rotated-low-contrast",
+    "homoglyph-tiny-corner",
 ]
 
-# Everything except low-opacity: text at ~11% alpha over per-pixel noise sits
-# below the signal floor a Pillow+tesseract pipeline can recover (the ink
-# ends up ~4 gray levels above a background with ~6 levels of noise at the
-# same scale). The README's "What framewall cannot see" section owns that
-# miss; if a detector change ever catches it, add it here and raise FLOOR.
-EXPECTED_CAUGHT = frozenset(TECHNIQUES) - {"low-opacity"}
-FLOOR = len(EXPECTED_CAUGHT)  # 7 of 8
+# The three misses. low-opacity: text at ~11% alpha over per-pixel noise sits
+# below the signal floor a Pillow+tesseract pipeline can recover (the ink ends
+# up ~4 gray levels above a background with ~6 levels of noise at the same
+# scale). bidi-override draws the instruction backwards, and split-payload
+# scatters it in fragments between filler lines; OCR reads both, but no
+# pattern matches what comes back. If a detector change catches one, take it
+# out of here and the floor goes up.
+MISSED = frozenset({"low-opacity", "bidi-override", "split-payload"})
+EXPECTED_CAUGHT = frozenset(TECHNIQUES) - MISSED
+FLOOR = len(EXPECTED_CAUGHT)  # 11 of 14
 
-BENIGN_CONTROLS = ["blank", "photo-like", "benign-ui", "benign-caption"]
+# A SUSPICIOUS verdict only asks; real screenshots land there too. These are
+# the techniques that reach DANGEROUS, the verdict the hook blocks on. The
+# other four caught ones (tiny-corner, edge-noise, rotated-low-contrast,
+# homoglyph-tiny-corner) are flagged by shape alone.
+EXPECTED_DANGEROUS = frozenset({
+    "low-contrast",
+    "white-on-white",
+    "fake-system-ui",
+    "caption-chrome",
+    "rotated-skew",
+    "homoglyph",
+    "color-camouflage",
+})
+DANGEROUS_FLOOR = len(EXPECTED_DANGEROUS)  # 7 of 14
+
+BENIGN_CONTROLS = ["blank", "photo-like", "benign-ui", "benign-caption", "benign-panel"]
 # benign-ui trips the FW-004 overlay-shape heuristic by design (it is a
 # dense, overlay-shaped UI); that one false positive is the documented
 # precision cost. Nothing else may join it.
@@ -77,19 +101,43 @@ def _scan(tmp_path, name, image):
     return scan_image(p)
 
 
-@requires_tesseract
-def test_technique_catch_floor(corpus, tmp_path):
+@pytest.fixture(scope="module")
+def verdicts(corpus, tmp_path_factory):
     generate_image, _ = corpus
-    caught = set()
-    for technique in TECHNIQUES:
-        result = _scan(tmp_path, technique, generate_image(technique, INSTRUCTION))
-        if Verdict(result.verdict) is not Verdict.CLEAN:
-            caught.add(technique)
+    tmp_path = tmp_path_factory.mktemp("techniques")
+    return {
+        technique: Verdict(_scan(tmp_path, technique, generate_image(technique, INSTRUCTION)).verdict)
+        for technique in TECHNIQUES
+    }
+
+
+@requires_tesseract
+def test_technique_catch_floor(verdicts):
+    caught = {t for t, v in verdicts.items() if v is not Verdict.CLEAN}
     regressed = EXPECTED_CAUGHT - caught
     assert not regressed, (
-        f"caught {len(caught)}/{len(TECHNIQUES)}; the floor is {FLOOR}/8 and "
-        f"these known-caught techniques regressed to clean: {sorted(regressed)}"
+        f"caught {len(caught)}/{len(TECHNIQUES)}; the floor is {FLOOR}/{len(TECHNIQUES)} "
+        f"and these known-caught techniques regressed to clean: {sorted(regressed)}"
     )
+
+
+@requires_tesseract
+def test_technique_dangerous_floor(verdicts):
+    dangerous = {t for t, v in verdicts.items() if v is Verdict.DANGEROUS}
+    regressed = EXPECTED_DANGEROUS - dangerous
+    assert not regressed, (
+        f"{len(dangerous)}/{len(TECHNIQUES)} reached DANGEROUS; the floor is "
+        f"{DANGEROUS_FLOOR} and these fell below it: "
+        f"{ {t: verdicts[t].value for t in sorted(regressed)} }"
+    )
+
+
+def test_the_corpus_ships_the_techniques_the_floor_names(corpus):
+    from injection_fixtures.benign import list_benign_samples
+    from injection_fixtures.catalog import list_techniques
+
+    assert [t.id for t in list_techniques()] == TECHNIQUES
+    assert [getattr(b, "id", b) for b in list_benign_samples()] == BENIGN_CONTROLS
 
 
 @requires_tesseract

@@ -42,7 +42,7 @@ jobs:
       - name: Run the test suite, OCR layer included
         run: |
           sudo apt-get update && sudo apt-get install -y tesseract-ocr
-          python -m pip install "injection-fixtures @ git+https://github.com/munzzyy/injection-fixtures@c1bbbca3d6e6dfe909ee2b6224240483a54b03a8"
+          python -m pip install "injection-fixtures @ git+https://github.com/munzzyy/injection-fixtures@039c0e3d5b43b9156b0fe50fbd1027f553a6c078"
           python -m pip install -e ".[dev]"
           python -m pytest -q
 

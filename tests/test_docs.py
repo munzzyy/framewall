@@ -66,6 +66,14 @@ def test_readme_benchmark_claim_matches_the_enforced_floor():
     m = re.search(r"catches (\d+) of (\d+)", readme)
     assert m, "README no longer states the measured catch rate"
     assert (int(m.group(1)), int(m.group(2))) == (floor.FLOOR, len(floor.TECHNIQUES))
+    dangerous = re.search(r"Of the (\d+), (\d+) come back DANGEROUS", readme)
+    assert dangerous, "README no longer splits the catches by verdict"
+    assert (int(dangerous.group(1)), int(dangerous.group(2))) == (
+        floor.FLOOR,
+        floor.DANGEROUS_FLOOR,
+    )
+    named = set(re.findall(r"`([a-z-]+)`", readme[dangerous.end():dangerous.end() + 400]))
+    assert floor.EXPECTED_DANGEROUS <= named, "README's DANGEROUS list drifted from the floor"
     fp = re.search(r"false-positives on (\d+) of (\d+)", readme)
     assert fp, "README no longer states the benign false-positive rate"
     assert (int(fp.group(1)), int(fp.group(2))) == (

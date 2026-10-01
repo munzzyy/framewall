@@ -301,20 +301,31 @@ finding) - the worst finding decides, full stop.
 ## Measured against a known-payload corpus
 
 [injection-fixtures](https://github.com/munzzyy/injection-fixtures) ships
-eight known visual-injection techniques as pytest fixtures. Run against all
-of them (2026-08-02, corpus 0.1.0), framewall 0.2.0 catches 7 of 8 and
-false-positives on 1 of 4 benign controls - the real numbers from a fresh
-run of that repo's `benchmark/run_framewall.py`, not cherry-picked ones.
-The one miss is `low-opacity` (text at ~11% alpha over per-pixel noise; see
-the limits below), and the one false positive is `benign-ui` tripping the
-FW-004 shape heuristic, which is the documented cost of flagging
-overlay-shaped UI at all. framewall 0.1.0 scored 2 of 8; re-run today it
-scores 3 of 8 (the corpus's noise rendering changed and its `caption-chrome`
-now OCRs directly), so the honest attribution is four catches added by
-0.2.0: the recovery passes (white-on-white, rotated-skew), the upscaled
-strip OCR (tiny-corner), and FW-006 (edge-noise).
-`tests/test_benchmark_floor.py` re-measures this floor in CI so it can't
-silently regress. Per-technique history and caveats:
+fourteen known visual-injection techniques and five benign controls as
+pytest fixtures. Run against all of them (2026-10-01, corpus 0.2.0),
+framewall 0.2.0 catches 11 of 14 and false-positives on 1 of 5 benign
+controls. Of the 11, 7 come back DANGEROUS, the verdict the hook blocks
+on: `low-contrast`, `white-on-white`, `fake-system-ui`, `caption-chrome`,
+`rotated-skew`, `homoglyph` and `color-camouflage`. The other 4
+(`tiny-corner`, `edge-noise`, `rotated-low-contrast` and
+`homoglyph-tiny-corner`) come back SUSPICIOUS, flagged by shape alone. That
+counts, but it is the same verdict a busy real screenshot can get, so it
+only asks.
+
+The three misses: `low-opacity` (text at ~11% alpha over per-pixel noise;
+see the limits below), `bidi-override` (the instruction drawn backwards)
+and `split-payload` (the instruction cut into fragments with filler lines
+between them). OCR reads the last two fine; no pattern matches what comes
+back. The one false positive is `benign-ui` tripping the FW-004 shape
+heuristic, which is the documented cost of flagging overlay-shaped UI at
+all.
+
+On the older eight-technique corpus 0.1.0, framewall 0.1.0 catches 3 of 8
+and 0.2.0 catches 7 of 8. The four added are the recovery passes
+(white-on-white, rotated-skew), the upscaled strip OCR (tiny-corner) and
+FW-006 (edge-noise). `tests/test_benchmark_floor.py` re-measures the
+corpus 0.2.0 floors, both the catch count and the DANGEROUS count, in CI so
+neither can silently regress. Per-technique history and caveats:
 [injection-fixtures' docs/benchmarks/framewall.md](https://github.com/munzzyy/injection-fixtures/blob/main/docs/benchmarks/framewall.md).
 
 ## What it does not do

@@ -38,6 +38,9 @@ Not tagged yet. Installing from main gets this version.
   injection text.
 - FW-002 and FW-004 are much faster on large images.
 - SARIF file locations are relative to the working directory.
+- The published catch rate is measured on injection-fixtures 0.2.0 and split
+  by verdict: 11 of 14 techniques flagged, 7 of them DANGEROUS. CI pins that
+  corpus and holds both numbers as floors.
 - `--fail-on clean` is rejected as a usage error. It used to fail every scan.
 
 ### Fixed

@@ -29,7 +29,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
       - name: Install the injection-fixtures corpus (Linux only; enforces the catch-rate floor)
         if: runner.os == 'Linux'
-        run: pip install "injection-fixtures @ git+https://github.com/munzzyy/injection-fixtures@c1bbbca3d6e6dfe909ee2b6224240483a54b03a8"
+        run: pip install "injection-fixtures @ git+https://github.com/munzzyy/injection-fixtures@039c0e3d5b43b9156b0fe50fbd1027f553a6c078"
       - name: Install framewall and test deps
         run: pip install -e ".[dev]"
       - name: Run tests
