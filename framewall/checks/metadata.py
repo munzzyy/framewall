@@ -10,6 +10,9 @@ captions) sees every byte of it. Pillow surfaces all of this through
 
 from __future__ import annotations
 
+import html
+import re
+
 from PIL import ExifTags
 
 from . import patterns
@@ -29,6 +32,12 @@ _BENIGN_KEYS = {
 }
 # Text keys ordinary tools write.
 _BENIGN_TEXT_KEYS = {"software"}
+# Timestamps: PNG's own "Creation Time" keyword and the three ImageMagick
+# stamps on everything it writes. Benign only while the value reads as a date.
+_TIMESTAMP_KEYS = {"creation time", "date:create", "date:modify", "date:timestamp"}
+# The XMP packet, which Pillow exposes under both names. Photo tools and macOS
+# screenshots carry one, so it isn't unexpected; it's still pattern-scanned.
+_XMP_KEYS = {"xmp", "xml:com.adobe.xmp"}
 _MIN_TEXT_LEN = 8
 
 # EXIF sub-directories the text-bearing tags actually live in. Image.getexif()
@@ -143,6 +152,16 @@ def _exif_fields(image) -> dict:
     return fields
 
 
+def _looks_like_timestamp(value: str) -> bool:
+    """Short, digit-heavy, three words at most, like "Tue 01 Oct 2026
+    14:03:11 CDT" or "2026-10-01T23:30:49+00:00"."""
+    return (
+        len(value) <= 64
+        and sum(ch.isdigit() for ch in value) >= 4
+        and len(re.findall(r"[A-Za-z]+", value)) <= 3
+    )
+
+
 def _text_fields(image):
     """Yield (field_name, text, benign_key) for every readable metadata value.
 
@@ -150,14 +169,28 @@ def _text_fields(image):
     tEXt keys and EXIF tags are attacker-chosen, so a payload hides just as
     easily under "Software" as under "Comment". benign_key only decides whether
     a *no-hit* value is worth reporting as unexpected text."""
+    seen_xmp = set()
     for key, raw in (image.info or {}).items():
         value = _decode(raw)
-        if isinstance(value, str) and len(value.strip()) >= _MIN_TEXT_LEN:
-            lowered = key.lower()
-            benign = lowered in _BENIGN_TEXT_KEYS or (
-                lowered in _BENIGN_KEYS and not isinstance(raw, str)
-            )
-            yield f"png:{key}", value.strip(), benign
+        if not isinstance(value, str) or len(value.strip()) < _MIN_TEXT_LEN:
+            continue
+        value = value.strip()
+        lowered = key.lower()
+        if lowered in _XMP_KEYS:
+            # Entities decoded, so "ignore&#32;previous" can't slip past the
+            # patterns now that a no-hit packet isn't reported.
+            value = html.unescape(value)
+            if value in seen_xmp:
+                continue
+            seen_xmp.add(value)
+            yield f"png:{key}", value, True
+            continue
+        benign = (
+            lowered in _BENIGN_TEXT_KEYS
+            or (lowered in _TIMESTAMP_KEYS and _looks_like_timestamp(value))
+            or (lowered in _BENIGN_KEYS and not isinstance(raw, str))
+        )
+        yield f"png:{key}", value, benign
 
     for field_name, text in _exif_fields(image).items():
         tag = field_name.split(":", 1)[1].lower()

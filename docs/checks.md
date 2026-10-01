@@ -83,10 +83,19 @@ Metadata / steganography-lite. Severity: medium, or high if the embedded
 text matches an injection pattern.
 
 Pillow only, no OCR needed. Reads PNG tEXt/iTXt chunks and EXIF text fields
-(comment, description, user comment, and similar) and scans anything
-non-trivial for injection phrasing. Ordinary plumbing fields (ICC profiles,
-DPI, software version strings) are skipped so a normal export doesn't get
-flagged just for having metadata at all.
+(comment, description, user comment, and similar) and scans every
+non-trivial value for injection phrasing, whatever its key. A value that
+matches nothing still gets a medium finding as unexpected text, unless its
+key is ordinary plumbing that a normal export carries:
+
+- binary settings Pillow decodes itself (ICC profile, EXIF block, DPI,
+  gamma, transparency, JFIF and GIF fields). A text chunk that borrows one
+  of these names doesn't count.
+- `Software`
+- `Creation Time` and ImageMagick's `date:create`, `date:modify` and
+  `date:timestamp`, as long as the value reads like a timestamp
+- the XMP packet (`XML:com.adobe.xmp`, also exposed as `xmp`). It's reported
+  once, and its XML entities are decoded before the patterns run.
 
 Strip metadata before the image reaches an agent, or confirm the embedded
 text is expected for wherever this image came from.
