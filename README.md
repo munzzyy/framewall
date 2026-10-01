@@ -225,7 +225,11 @@ Register it in `~/.claude/settings.json` (use the absolute path to the script):
       {
         "matcher": "Read",
         "hooks": [
-          { "type": "command", "command": "/absolute/path/to/framewall/hooks/framewall-guard.sh" }
+          {
+            "type": "command",
+            "command": "/absolute/path/to/framewall/hooks/framewall-guard.sh",
+            "timeout": 60
+          }
         ]
       }
     ]
@@ -238,9 +242,22 @@ It only scans image files and passes everything else straight through. The
 low-contrast checks are shape heuristics that also fire on ordinary busy UI
 (see below), so a hard block there would get in your way for no good reason -
 a hard `DANGEROUS` block is reserved for the checks that actually read an
-injection string. If framewall isn't installed the read is allowed with a
-note on stderr, not blocked, so a missing dependency can't wall you off from
-every screenshot.
+injection string.
+
+The guard gives each scan 30 seconds and passes framewall a 20 second
+`--max-scan-seconds`, so a heavy image usually ends as a partial scan with a
+verdict rather than being cut off. The `timeout` in the snippet gives Claude
+Code room above that. A scan that produces no verdict at all (it crashed, hit
+the 30 second limit, or the file wouldn't decode) gets an ask.
+
+A `CLEAN` verdict from a scan that skipped OCR (tesseract or its language
+data is missing) or stopped early is not the same as a full clean scan. The
+read is allowed, and Claude Code shows you a message saying the scan was
+incomplete and why; `framewall doctor` tells you what to fix. Set
+`FRAMEWALL_GUARD_FAIL=closed` to get an ask for these instead, and a deny for
+the no-verdict case. If framewall isn't installed at all, the read is allowed
+with the same kind of message, so a missing dependency can't wall you off
+from every screenshot.
 
 ### Output formats
 
