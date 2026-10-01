@@ -62,6 +62,14 @@ def test_invalid_fail_on_value_exits_two_not_one(clean_png):
     assert exc_info.value.code == 2
 
 
+def test_fail_on_clean_is_a_usage_error_not_a_failed_scan(clean_png, capsys):
+    # As a threshold "clean" would fail every image, so it is refused.
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["scan", str(clean_png), "--no-ocr", "--fail-on", "clean"])
+    assert exc.value.code == 2
+    assert "invalid --fail-on" in capsys.readouterr().err
+
+
 def test_missing_target_exits_two(capsys):
     code = cli.main(["scan", "/no/such/path/anywhere.png"])
     assert code == 2

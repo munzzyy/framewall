@@ -25,8 +25,8 @@ worth a human's eyes before an agent sees it unsupervised.
 
 ## FW-002
 
-Low-contrast text-shaped region. Severity: medium, or high for a large
-region.
+Low-contrast text-shaped region. Severity: medium. A shape heuristic that
+never reads the region doesn't get to block a read by itself.
 
 Pillow only, no OCR needed. Splits the image into small blocks and flags
 ones with real internal structure (some standard deviation - edges, strokes)

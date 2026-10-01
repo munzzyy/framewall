@@ -179,7 +179,7 @@ version:    tesseract 5.5.3
 languages:  afr, osd
 probe lang: tesseract default (eng)
 OCR:        tesseract cannot read text on this machine (missing or no language data)
-fix:        install the language pack, e.g. apt install tesseract-ocr-eng
+fix:        install the language pack: apt install tesseract-ocr-eng, pacman -S tesseract-data-eng, or brew install tesseract
 ```
 
 ### In CI
@@ -211,8 +211,9 @@ without OCR, or cut short by the time budget, fails the step.
 This repo's own CI (`.github/workflows/ci.yml`) installs `tesseract-ocr` on
 the Linux job so the full suite, OCR layer included, runs there; macOS and
 Windows jobs run the tesseract-independent subset, which is most of the
-test suite - only `tests/test_ocr.py` and the OCR-gated half of
-`tests/test_corpus.py` need it, and they skip cleanly (see Tests below).
+test suite. The OCR-gated tests live in `tests/test_ocr.py`,
+`tests/test_corpus.py`, `tests/test_recover.py` and
+`tests/test_benchmark_floor.py`, and they skip cleanly (see Tests below).
 
 ### As a Claude Code hook
 
@@ -287,7 +288,7 @@ Full detail, thresholds, and the reasoning behind each one:
 | ID | Check | Needs OCR | Severity |
 |---|---|---|---|
 | FW-001 | Injection text recovered from the image | yes | high |
-| FW-002 | Low-contrast, text-shaped region | no | medium/high |
+| FW-002 | Low-contrast, text-shaped region | no | medium |
 | FW-003 | Text below legible size | no (better with) | medium |
 | FW-004 | Fake system/overlay UI box | no | medium |
 | FW-005 | Injection text in PNG/EXIF metadata | no | medium/high |
@@ -329,6 +330,10 @@ silently regress. Per-technique history and caveats:
   document that's itself teaching prompt-injection concepts. A clean scan
   means nothing obvious tripped, not that the image is safe to feed an
   agent unsupervised.
+- **The injection patterns are English only.** `--lang` lets tesseract read
+  German, French or any other installed language, but FW-001 and FW-005
+  match English phrasing, so a payload written in another language is read
+  and then not matched.
 - **Tiny text needs to survive an upscale to be read exactly.** Below
   roughly 8-9px, tesseract stops recognizing text at native size. framewall
   flags thin, text-shaped strips anyway and re-reads them upscaled with a
@@ -388,9 +393,12 @@ untrusted image regions to the agent at all); no text scanner covers it.
 .venv/bin/pytest
 ```
 
-Every test that needs a real tesseract binary is marked and
-skips cleanly when one isn't on PATH (`tests/conftest.py::requires_tesseract`) -
-run `tesseract --version` to check whether your machine runs the full
+Every test that needs a working tesseract is marked and skips cleanly when
+tesseract is missing or can't read text (`tests/conftest.py::requires_tesseract`).
+They live in `tests/test_ocr.py`, `tests/test_corpus.py`,
+`tests/test_recover.py` and `tests/test_benchmark_floor.py`; the last one
+also needs the pinned injection-fixtures corpus installed, as the Linux CI
+job does. Run `framewall doctor` to check whether your machine runs the full
 suite or the heuristic subset. `tests/test_corpus.py` is the floor that
 matters: a labeled set of malicious fixtures that must each be flagged, and
 a benign one that must stay CLEAN, built fresh with Pillow inside the test

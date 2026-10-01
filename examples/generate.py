@@ -4,10 +4,11 @@ Pillow-only, so anyone can regenerate and diff them:
 
     python3 examples/generate.py
 
-poisoned-screenshot.png stacks every technique framewall looks for in one
-image, on purpose - a low-contrast hidden paragraph, a fake system overlay,
-a tiny-text line, and a PNG metadata payload - so a single `framewall scan`
-against it demonstrates all five checks at once.
+poisoned-screenshot.png stacks several techniques framewall looks for in
+one image, on purpose - a low-contrast hidden paragraph, a fake system
+overlay, a tiny-text line, and a PNG metadata payload - so a single
+`framewall scan` against it demonstrates five of the six checks at once.
+The sixth, FW-006 (two-tone camouflage), isn't in it.
 """
 
 from __future__ import annotations

@@ -46,7 +46,7 @@ class Region:
 
 @dataclass(frozen=True)
 class Finding:
-    rule_id: str  # FW-001..FW-005
+    rule_id: str  # FW-001..FW-006
     layer: str  # short slug, e.g. "injection-text"
     severity: Severity
     title: str

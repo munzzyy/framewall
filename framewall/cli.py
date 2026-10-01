@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--fail-on",
         default="suspicious",
         metavar="VERDICT",
-        help="exit non-zero at or above this verdict (suspicious|dangerous|none; default: suspicious)",
+        help="exit 1 at or above this verdict (suspicious|dangerous|none; default: suspicious)",
     )
     scan.add_argument(
         "--require-ocr",
@@ -85,13 +85,21 @@ def _fail_threshold(value: str):
     if value in ("none", "off", "never"):
         return None
     try:
-        return Verdict.parse(value)
+        verdict = Verdict.parse(value)
     except ValueError:
+        verdict = None
+    if verdict is None or verdict is Verdict.CLEAN:
         # Exit 2, argparse's usage-error convention, not 1. Exit 1 is the
         # documented "scan ran and hit the --fail-on threshold" - a mistyped
-        # threshold must not be mistaken for a real detection in CI.
-        print(f"framewall: invalid --fail-on value {value!r}", file=sys.stderr)
+        # threshold must not be mistaken for a real detection in CI. "clean"
+        # parses as a verdict, but as a threshold it fails every scan.
+        print(
+            f"framewall: invalid --fail-on value {value!r} "
+            f"(use suspicious, dangerous or none)",
+            file=sys.stderr,
+        )
         raise SystemExit(2)
+    return verdict
 
 
 def _run_doctor(args) -> int:
@@ -109,8 +117,19 @@ def _run_doctor(args) -> int:
         print("OCR:        working; the injection-text check will run on scans")
         return 0
     print(f"OCR:        {d.reason}")
-    print("fix:        install the language pack, e.g. apt install tesseract-ocr-eng")
+    print(f"fix:        install the language pack: {_install_hint(d.lang_requested)}")
     return 1
+
+
+def _install_hint(lang) -> str:
+    """Package names for the requested tesseract language(s) on the three
+    package managers people hit most. Debian spells chi_sim as chi-sim."""
+    langs = [part for part in (lang or "eng").split("+") if part]
+    apt = " ".join(f"tesseract-ocr-{code.lower().replace('_', '-')}" for code in langs)
+    pacman = " ".join(f"tesseract-data-{code}" for code in langs)
+    # Homebrew's tesseract formula carries eng and osd; the rest are in tesseract-lang.
+    brew = "tesseract" if set(langs) <= {"eng", "osd"} else "tesseract-lang"
+    return f"apt install {apt}, pacman -S {pacman}, or brew install {brew}"
 
 
 def main(argv=None) -> int:

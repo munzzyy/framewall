@@ -79,3 +79,29 @@ def test_lang_env_var_is_honored(monkeypatch, capsys):
     monkeypatch.setenv("FRAMEWALL_TESSERACT_LANG", "deu")
     cli.main(["doctor"])
     assert seen["lang"] == "deu"
+
+
+def _broken_install(monkeypatch):
+    monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: "/usr/bin/tesseract")
+    monkeypatch.setattr(ocr_mod, "tesseract_version", lambda: "tesseract 5.3.4")
+    monkeypatch.setattr(ocr_mod, "list_languages", lambda: ["osd"])
+    monkeypatch.setattr(ocr_mod, "ocr_functional", lambda lang=None: False)
+
+
+def test_fix_line_names_the_requested_pack_for_each_package_manager(monkeypatch, capsys):
+    _broken_install(monkeypatch)
+    cli.main(["doctor", "--lang", "deu"])
+    fix = [line for line in capsys.readouterr().out.splitlines() if line.startswith("fix:")]
+    assert len(fix) == 1
+    for hint in ("apt install tesseract-ocr-deu", "pacman -S tesseract-data-deu",
+                 "brew install tesseract-lang"):
+        assert hint in fix[0]
+    assert "-eng" not in fix[0]
+
+
+def test_fix_line_defaults_to_english(monkeypatch, capsys):
+    _broken_install(monkeypatch)
+    cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert "apt install tesseract-ocr-eng" in out
+    assert "brew install tesseract\n" in out or out.rstrip().endswith("brew install tesseract")

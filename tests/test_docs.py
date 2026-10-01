@@ -72,3 +72,15 @@ def test_readme_benchmark_claim_matches_the_enforced_floor():
         len(floor.ALLOWED_FALSE_POSITIVES),
         len(floor.BENIGN_CONTROLS),
     )
+
+
+def test_version_agrees_across_pyproject_package_and_changelog():
+    import framewall
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    declared = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.MULTILINE)
+    assert declared, "pyproject.toml has no version line"
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    newest = re.search(r"^##\s+(\d+\.\d+\.\d+)\b", changelog, re.MULTILINE)
+    assert newest, "CHANGELOG.md has no version heading"
+    assert declared.group(1) == framewall.__version__ == newest.group(1)
