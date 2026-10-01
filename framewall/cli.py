@@ -8,7 +8,7 @@ import sys
 
 from . import __version__
 from .ocr import diagnose
-from .report import render_human, render_json, render_sarif
+from .report import render_human, render_json, render_quiet, render_sarif
 from .scanner import DEFAULT_MAX_SCAN_SECONDS, scan_image
 from .targets import resolve
 from .verdict import Verdict, rank
@@ -155,9 +155,7 @@ def main(argv=None) -> int:
     elif args.sarif:
         print(render_sarif(results))
     elif args.quiet:
-        for r in results:
-            label = "ERROR" if r.error else r.verdict.upper()
-            print(f"{label}  {r.path}")
+        print(render_quiet(results))
     else:
         print(render_human(results, color=color))
 

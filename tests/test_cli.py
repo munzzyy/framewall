@@ -6,6 +6,7 @@ test_ocr.py and test_corpus.py are for."""
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -101,6 +102,16 @@ def test_quiet_output_is_one_line_per_image(clean_png, capsys):
     out = capsys.readouterr().out.strip().splitlines()
     assert len(out) == 1
     assert out[0].startswith("CLEAN")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows file names can't hold ESC or a newline")
+def test_quiet_output_escapes_a_hostile_file_name(tmp_path, capsys):
+    clean_screenshot().save(tmp_path / "a.png")
+    clean_screenshot().save(tmp_path / "evil\x1b[31m\nCLEAN  fake.png")
+    cli.main(["scan", str(tmp_path), "--quiet", "--no-ocr", "--fail-on", "none"])
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert len(out.strip().splitlines()) == 2
 
 
 def test_no_ocr_flag_is_reported_in_output(clean_png, capsys):

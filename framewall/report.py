@@ -9,16 +9,17 @@ from . import __version__
 from .finding import Severity
 from .ocr import tesseract_path
 
-# Snippets and paths carry attacker-controlled bytes: a snippet is text OCR'd
-# out of the scanned image or lifted from its metadata, and a path is whatever
-# the file was named. Printed raw to a terminal, an embedded ESC sequence would
+# Snippets, titles and paths carry attacker-controlled bytes: a snippet is
+# text OCR'd out of the scanned image or lifted from its metadata, an FW-005
+# title names the metadata key the file chose, and a path is whatever the file
+# was named. Printed raw to a terminal, an embedded ESC sequence would
 # run - clearing the screen, recoloring, or forging report lines via a newline.
 # Escape every C0/C1 control byte (including tab/newline/CR) plus the Unicode
 # line/paragraph separators and directional-formatting characters - U+202E and
 # friends visually reverse the rest of the line and U+2028/U+2029 break it in
 # some viewers, both of which let a snippet forge report lines. Only the human
-# renderer needs this; JSON and SARIF go through json.dumps, which already
-# escapes control characters.
+# and --quiet renderers need this; JSON and SARIF go through json.dumps, which
+# already escapes control characters.
 _CONTROL_RE = re.compile(
     "[\x00-\x1f\x7f-\x9f"
     "\u2028\u2029"  # line / paragraph separators
@@ -60,7 +61,7 @@ def render_human(results, color: bool = True) -> str:
             lines.append(c("\033[1;31m", f"  ERROR  {_safe(r.error)}"))
             continue
 
-        ocr_note = "used" if r.ocr_used else f"skipped ({r.ocr_skipped_reason})"
+        ocr_note = "used" if r.ocr_used else f"skipped ({_safe(r.ocr_skipped_reason)})"
         lines.append(f"  {r.width}x{r.height}px   OCR: {ocr_note}")
         for note in r.notes:
             lines.append(c("\033[33m", f"  note: {_safe(note)}"))
@@ -78,12 +79,12 @@ def render_human(results, color: bool = True) -> str:
         for f in r.findings:
             tag = c(_COLOR[f.severity], f" {f.severity.label.upper():^8} ")
             loc = f"  @ {f.region}" if f.region else ""
-            lines.append(f"  {tag} {f.title}  [{f.rule_id}]{loc}")
-            lines.append(f"           {f.detail}")
+            lines.append(f"  {tag} {_safe(f.title)}  [{f.rule_id}]{loc}")
+            lines.append(f"           {_safe(f.detail)}")
             if f.snippet:
                 lines.append(c("\033[90m", f"           > {_safe(f.snippet)}"))
             if f.remediation:
-                lines.append(c("\033[90m", f"           fix: {f.remediation}"))
+                lines.append(c("\033[90m", f"           fix: {_safe(f.remediation)}"))
             lines.append("")
 
         counts = r.counts()
@@ -97,6 +98,14 @@ def render_human(results, color: bool = True) -> str:
         lines.append(f"  {summary}   verdict: {c(vc, r.verdict.upper())}")
     lines.append("")
     return "\n".join(lines)
+
+
+def render_quiet(results) -> str:
+    """One line per image. Scripts split this on lines, so a path holding a
+    newline must not add one."""
+    return "\n".join(
+        f"{'ERROR' if r.error else r.verdict.upper()}  {_safe(r.path)}" for r in results
+    )
 
 
 def render_json(results) -> str:

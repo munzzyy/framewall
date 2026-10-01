@@ -233,3 +233,27 @@ def test_human_report_escapes_control_bytes_in_notes():
     out = render_human([r], color=False)
     assert "\x1b[31m" not in out
     assert "\x07" not in out
+
+
+def test_human_report_escapes_title_detail_and_remediation():
+    # An FW-005 title names the metadata key, and the file picks that key.
+    forged = "\x1b[2J\n  CLEAN  forged.png‮"
+    finding = Finding(
+        rule_id="FW-005", layer="metadata", severity=Severity.MEDIUM,
+        title=f"Unexpected embedded text in image metadata (png:{forged})",
+        detail=f"detail {forged}", remediation=f"fix {forged}",
+    )
+    r = ImageResult(path="x.png", width=10, height=10, ocr_used=True, findings=[finding], verdict="suspicious")
+    out = render_human([r], color=False)
+    assert "\x1b" not in out
+    assert "‮" not in out
+    assert not any(line.lstrip().startswith("CLEAN") for line in out.splitlines())
+
+
+def test_human_report_escapes_the_ocr_skip_reason():
+    # The skip reason can quote tesseract's own stderr.
+    r = ImageResult(path="x.png", width=10, height=10, ocr_used=False,
+                    ocr_skipped_reason="tesseract failed (\x1b[2J\nCLEAN)", verdict="clean")
+    out = render_human([r], color=False)
+    assert "\x1b" not in out
+    assert not any(line.startswith("CLEAN") for line in out.splitlines())
