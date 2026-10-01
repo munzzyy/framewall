@@ -39,10 +39,13 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None,
 
     budget = ocr_mod.ScanBudget(max_seconds or None)
     findings = []
+    ocr_gaps = []  # (frame index, why OCR did not cover it)
     for index, frame in frames:
         if index == 0:
             result.width, result.height = frame.size
-        frame_findings = _scan_frame(frame, use_ocr, ocr_timeout, result, budget, lang)
+        frame_findings, skipped = _scan_frame(frame, use_ocr, ocr_timeout, budget, lang)
+        if skipped:
+            ocr_gaps.append((index, skipped))
         if index > 0:
             # Tag which frame a finding came from so a CLEAN-looking first frame
             # can't hide an attack in a later one of an animated GIF / TIFF.
@@ -52,6 +55,14 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None,
             ]
         findings.extend(frame_findings)
 
+    # One frame OCR missed leaves the whole image's OCR incomplete.
+    result.ocr_used = not ocr_gaps
+    if ocr_gaps:
+        index, reason = ocr_gaps[0]
+        if len(ocr_gaps) < len(frames):
+            reason = f"frame {index}: {reason}"
+        result.ocr_skipped_reason = reason
+
     findings.sort(key=lambda f: f.sort_key())
     result.findings = findings
     result.notes = list(budget.notes)
@@ -59,7 +70,9 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None,
     return result
 
 
-def _scan_frame(image, use_ocr: bool, ocr_timeout, result, budget, lang) -> list:
+def _scan_frame(image, use_ocr: bool, ocr_timeout, budget, lang):
+    """Returns (findings, skipped): skipped is "" when the OCR passes ran on
+    this frame, otherwise why they didn't."""
     gray = imageio.safe_convert(image, "L")
 
     findings = []
@@ -70,59 +83,52 @@ def _scan_frame(image, use_ocr: bool, ocr_timeout, result, budget, lang) -> list
     findings.extend(metadata.find(image))
     tiny_strips = tiny_text.find_heuristic(gray)
 
-    if use_ocr and ocr_mod.ocr_functional(lang):
-        try:
-            low_contrast_regions = [f.region for f in low_contrast_findings if f.region]
-            strip_regions = [
-                _padded(f.region, image.size)
-                for f in tiny_strips
-                if f.region and f.region.width >= tiny_text.MIN_CONFIRMABLE_STRIP_WIDTH
-            ]
-            inj_findings, words, lines = injection_text.find(
-                image,
-                gray=gray,
-                low_contrast_regions=low_contrast_regions,
-                extra_regions=strip_regions,
-                timeout=ocr_timeout,
-                lang=lang,
-                budget=budget,
-            )
-        except ocr_mod.OcrTimeout as e:
-            # OCR hung on this image. Don't claim a completed OCR pass we didn't
-            # actually finish: degrade to the heuristic fallback and say why,
-            # the same way a missing tesseract does.
-            result.ocr_used = False
-            result.ocr_skipped_reason = (
-                f"tesseract timed out on this image ({e}); the injection-text check did not run"
-            )
-            findings.extend(tiny_strips)
-        else:
-            result.ocr_used = True
-            findings.extend(inj_findings)
-            findings.extend(tiny_text.find_from_lines(lines, image.size))
-            # Strips the primary pass read nothing in, but whose upscaled
-            # region-OCR crop came back with words, are sub-legible text the
-            # plain pass missed - the classic tiny-corner payload.
-            findings.extend(
-                tiny_text.confirmed_uncovered(tiny_strips, lines, words, image.size)
-            )
-    else:
-        result.ocr_used = False
-        if not use_ocr:
-            result.ocr_skipped_reason = "--no-ocr was passed"
-        elif ocr_mod.tesseract_path() is None:
-            result.ocr_skipped_reason = "tesseract not found on PATH"
-        else:
-            hint = (
-                f"missing language data for {lang!r}?" if lang else "missing language data?"
-            )
-            result.ocr_skipped_reason = (
-                f"tesseract is installed but read no text ({hint}); "
-                f"the injection-text check did not run"
-            )
+    if not use_ocr:
         findings.extend(tiny_strips)
+        return findings, "--no-ocr was passed"
+    if not ocr_mod.ocr_functional(lang):
+        findings.extend(tiny_strips)
+        if ocr_mod.tesseract_path() is None:
+            return findings, "tesseract not found on PATH"
+        hint = f"missing language data for {lang!r}?" if lang else "missing language data?"
+        return findings, (
+            f"tesseract is installed but read no text ({hint}); "
+            f"the injection-text check did not run"
+        )
 
-    return findings
+    try:
+        low_contrast_regions = [f.region for f in low_contrast_findings if f.region]
+        strip_regions = [
+            _padded(f.region, image.size)
+            for f in tiny_strips
+            if f.region and f.region.width >= tiny_text.MIN_CONFIRMABLE_STRIP_WIDTH
+        ]
+        inj_findings, words, lines = injection_text.find(
+            image,
+            gray=gray,
+            low_contrast_regions=low_contrast_regions,
+            extra_regions=strip_regions,
+            timeout=ocr_timeout,
+            lang=lang,
+            budget=budget,
+        )
+    except ocr_mod.OcrFailed as e:
+        # OCR hung or failed on this image. Don't claim a completed OCR pass we
+        # didn't actually finish: degrade to the heuristic fallback and say
+        # why, the same way a missing tesseract does.
+        findings.extend(tiny_strips)
+        what = "timed out" if isinstance(e, ocr_mod.OcrTimeout) else "failed"
+        return findings, (
+            f"tesseract {what} on this image ({e}); the injection-text check did not run"
+        )
+
+    findings.extend(inj_findings)
+    findings.extend(tiny_text.find_from_lines(lines, image.size))
+    # Strips the primary pass read nothing in, but whose upscaled region-OCR
+    # crop came back with words, are sub-legible text the plain pass missed -
+    # the classic tiny-corner payload.
+    findings.extend(tiny_text.confirmed_uncovered(tiny_strips, lines, words, image.size))
+    return findings, ""
 
 
 def _padded(region: Region, size) -> Region:

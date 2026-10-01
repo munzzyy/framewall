@@ -10,6 +10,7 @@ they just return no words.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import shutil
 import subprocess
@@ -29,8 +30,21 @@ DEFAULT_TIMEOUT = 20  # seconds, per OCR pass
 # image. Shrink the upscale factor to keep the resized buffer under this.
 MAX_UPSCALED_PIXELS = 8_000_000
 
+# tesseract refuses any image wider or taller than this ("Image too large")
+# and exits 1 with nothing on stdout. Bigger images are read in overlapping
+# tiles instead; text up to TILE_OVERLAP px long lands whole in one tile.
+MAX_TESSERACT_SIDE = 32767
+TILE_OVERLAP = 2048
 
-class OcrTimeout(Exception):
+
+class OcrFailed(Exception):
+    """tesseract ran but gave no usable answer for this image: it exited
+    non-zero, could not be started, or the image could not be written for it.
+    Raised rather than read as "no words", because for a detector an OCR pass
+    that silently failed looks exactly like a clean image."""
+
+
+class OcrTimeout(OcrFailed):
     """tesseract exceeded its per-pass timeout on a specific image. Raised
     rather than swallowed so the scanner can report the image as not fully
     scanned instead of silently treating a hung OCR pass as 'no text found'."""
@@ -99,7 +113,7 @@ def ocr_functional(lang: Optional[str] = None) -> bool:
     try:
         probe.save(probe_path)
         out = _run_tsv(tess_bin, probe_path, timeout=DEFAULT_TIMEOUT, lang=lang)
-    except (subprocess.SubprocessError, OSError):
+    except (subprocess.SubprocessError, OSError, OcrFailed):
         return False
     finally:
         try:
@@ -221,6 +235,9 @@ def _run_tsv(tess_bin: str, image_path: str, timeout: float, lang: Optional[str]
         # Options go after the outputbase and before the tsv config name.
         cmd[3:3] = ["-l", lang]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    if proc.returncode != 0:
+        detail = " ".join((proc.stderr or "").split())[:200]
+        raise OcrFailed(f"tesseract exited {proc.returncode}" + (f": {detail}" if detail else ""))
     return proc.stdout
 
 
@@ -294,30 +311,104 @@ def _flush_line(current_line: dict, lines: list) -> None:
 
 
 def ocr_image(image: Image.Image, timeout: float = DEFAULT_TIMEOUT, lang: Optional[str] = None):
-    """Run tesseract on a full Pillow image. Returns (words, lines); both are
-    empty if tesseract is missing or fails to run - callers that need to tell
-    "no text" apart from "OCR unavailable" should check tesseract_path()
-    themselves first. Raises OcrTimeout if tesseract exceeds `timeout` on this
-    image, so a hung pass surfaces as an incomplete scan rather than a clean
-    one."""
+    """Run tesseract on a full Pillow image. Returns (words, lines), empty if
+    tesseract is missing - callers that need to tell "no text" apart from
+    "OCR unavailable" should check tesseract_path() themselves first.
+
+    `timeout` bounds the whole call. An image too big for tesseract in either
+    dimension is read in overlapping tiles inside that same limit. Raises
+    OcrTimeout when the limit runs out and OcrFailed when tesseract can't read
+    the image at all, so neither ever passes as "no text found"."""
     tess_bin = tesseract_path()
     if tess_bin is None:
         return [], []
+    deadline = time.monotonic() + timeout
+    words: list = []
+    lines: list = []
+    try:
+        for box, owns in _tiles(image.size):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired("tesseract", timeout)
+            if box is None:
+                return _ocr_once(tess_bin, image, remaining, lang)
+            tile_words, tile_lines = _ocr_once(tess_bin, image.crop(box), remaining, lang)
+            dx, dy = box[:2]
+            for item in tile_words:
+                moved = dataclasses.replace(item, left=item.left + dx, top=item.top + dy)
+                if owns(moved):
+                    words.append(moved)
+            for item in tile_lines:
+                moved = dataclasses.replace(item, left=item.left + dx, top=item.top + dy)
+                if owns(moved):
+                    lines.append(moved)
+    except subprocess.TimeoutExpired as e:
+        raise OcrTimeout(f"tesseract exceeded {timeout}s on this image") from e
+    return words, lines
+
+
+def _ocr_once(tess_bin: str, image: Image.Image, timeout: float, lang: Optional[str]):
     fd, tmp_path = tempfile.mkstemp(suffix=".png", prefix="framewall-")
     try:
         os.close(fd)
-        image.save(tmp_path, format="PNG")
-        output = _run_tsv(tess_bin, tmp_path, timeout, lang=lang)
+        try:
+            image.save(tmp_path, format="PNG")
+        except OSError as e:
+            raise OcrFailed(f"could not write the image for tesseract ({e})") from e
+        try:
+            output = _run_tsv(tess_bin, tmp_path, timeout, lang=lang)
+        except OSError as e:
+            raise OcrFailed(f"could not run tesseract ({e})") from e
         return _parse_tsv(output)
-    except subprocess.TimeoutExpired as e:
-        raise OcrTimeout(f"tesseract exceeded {timeout}s on this image") from e
-    except OSError:
-        return [], []
     finally:
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+def _tile_starts(length: int) -> list:
+    if length <= MAX_TESSERACT_SIDE:
+        return [0]
+    step = MAX_TESSERACT_SIDE - TILE_OVERLAP
+    return list(range(0, length - MAX_TESSERACT_SIDE, step)) + [length - MAX_TESSERACT_SIDE]
+
+
+def _owner_bounds(starts: list) -> list:
+    """Where ownership passes from one tile to the next: the middle of the
+    strip they share. Something no wider than TILE_OVERLAP whose center is on
+    a tile's side of both bounds sits wholly inside that tile."""
+    return [(nxt + start + MAX_TESSERACT_SIDE) / 2 for start, nxt in zip(starts, starts[1:])]
+
+
+def _tiles(size):
+    """(crop box, owns) per tile. The box is None when the image fits in one
+    pass. `owns` keeps a word or line only in the tile that holds its center,
+    so text inside an overlap is reported once, not twice."""
+    width, height = size
+    xs, ys = _tile_starts(width), _tile_starts(height)
+    if len(xs) == 1 and len(ys) == 1:
+        yield None, lambda item: True
+        return
+    x_bounds, y_bounds = _owner_bounds(xs), _owner_bounds(ys)
+    for yi, top in enumerate(ys):
+        for xi, left in enumerate(xs):
+            box = (left, top, min(width, left + MAX_TESSERACT_SIDE), min(height, top + MAX_TESSERACT_SIDE))
+            yield box, _owner(xi, yi, x_bounds, y_bounds)
+
+
+def _owner(xi, yi, x_bounds, y_bounds):
+    lo_x = x_bounds[xi - 1] if xi > 0 else float("-inf")
+    hi_x = x_bounds[xi] if xi < len(x_bounds) else float("inf")
+    lo_y = y_bounds[yi - 1] if yi > 0 else float("-inf")
+    hi_y = y_bounds[yi] if yi < len(y_bounds) else float("inf")
+
+    def owns(item) -> bool:
+        cx = item.left + item.width / 2
+        cy = item.top + item.height / 2
+        return lo_x <= cx < hi_x and lo_y <= cy < hi_y
+
+    return owns
 
 
 def ocr_region(image: Image.Image, box, timeout: float = DEFAULT_TIMEOUT, upscale: int = 3,
@@ -333,9 +424,10 @@ def ocr_region(image: Image.Image, box, timeout: float = DEFAULT_TIMEOUT, upscal
     dynamic range, which is what recovers text a human would skim past but a
     vision model - which doesn't care about contrast - reads anyway.
 
-    Raises OcrTimeout when tesseract exceeds `timeout` on the region: the
-    caller decides whether to press on with the other regions, and notes the
-    gap, rather than this function silently reporting the region as empty.
+    Raises OcrTimeout when tesseract exceeds `timeout` on the region, and
+    OcrFailed when it can't read the region at all: the caller decides whether
+    to press on with the other regions, and notes the gap, rather than this
+    function silently reporting the region as empty.
     """
     tess_bin = tesseract_path()
     if tess_bin is None:

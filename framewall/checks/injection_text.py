@@ -70,6 +70,9 @@ def find(image, gray=None, low_contrast_regions=None, extra_regions=None,
         except ocr_mod.OcrTimeout:
             budget.note("tesseract timed out on a flagged region; that region went unread")
             continue
+        except ocr_mod.OcrFailed as e:
+            budget.note(f"tesseract failed on a flagged region ({e}); that region went unread")
+            continue
         words.extend(region_words)
         if region_words:
             # A locally-boosted region is its own recovered line: give it its
@@ -103,6 +106,9 @@ def _recovery_findings(gray, per_pass, lang, budget) -> list:
     except ocr_mod.OcrTimeout:
         budget.note("tesseract timed out on the residual recovery pass")
         words, lines = [], []
+    except ocr_mod.OcrFailed as e:
+        budget.note(f"tesseract failed on the residual recovery pass ({e})")
+        words, lines = [], []
     segments = [ln.text for ln in lines] if lines else [" ".join(w.text for w in words)]
     found = _findings_from(
         segments, words,
@@ -126,6 +132,9 @@ def _recovery_findings(gray, per_pass, lang, budget) -> list:
         )
     except ocr_mod.OcrTimeout:
         budget.note("tesseract timed out on the deskew recovery pass")
+        return []
+    except ocr_mod.OcrFailed as e:
+        budget.note(f"tesseract failed on the deskew recovery pass ({e})")
         return []
     segments = [ln.text for ln in lines] if lines else [" ".join(w.text for w in words)]
     # Word boxes from the rotated frame don't map back to image coordinates,
