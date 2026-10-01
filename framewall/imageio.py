@@ -7,6 +7,7 @@ memory or hanging the OCR pass downstream.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NamedTuple
 
 from PIL import Image, ImageSequence, UnidentifiedImageError
 
@@ -77,26 +78,40 @@ def load_image(path) -> Image.Image:
     """Load `path` as an RGB Pillow image (its first frame), or raise
     ImageError with a message safe to print directly. Dimensions are checked
     against the header before the pixel data is decoded, so an oversized image
-    never gets fully loaded into memory just to be rejected."""
-    return safe_convert(_open_checked(path), "RGB")
+    never gets fully loaded into memory just to be rejected. Pixels only: the
+    file's info dict is left behind, for the reason load() gives."""
+    rgb = safe_convert(_open_checked(path), "RGB")
+    rgb.info = {}
+    return rgb
 
 
-def load_frames(path):
-    """Yield (index, rgb_frame) for each frame of `path`, up to MAX_FRAMES.
+class Loaded(NamedTuple):
+    frames: list  # (index, rgb_frame) pairs
+    metadata: Image.Image  # 1x1 stand-in carrying the file's info dict
 
-    A single-frame image yields exactly one. Animated GIFs and multi-page
-    TIFFs carry a payload just as easily in frame 2 as in frame 1, so a scan
-    that only ever looked at the first frame would return a confident CLEAN on
-    a file whose later frame is the attack. Same size guards as load_image; the
-    first frame keeps the container's Image.info (where PNG/GIF metadata lives)
-    so the metadata check still sees it."""
+
+def load(path) -> Loaded:
+    """Decode `path` into its frames, up to MAX_FRAMES, and its metadata.
+
+    Animated GIFs and multi-page TIFFs carry a payload just as easily in frame
+    2 as in frame 1, so a scan that only ever looked at the first frame would
+    return a confident CLEAN on a file whose later frame is the attack. Same
+    size guards as load_image.
+
+    The frames hold pixels and nothing else. The container's info dict (PNG
+    text chunks, GIF and JPEG comments, EXIF) rides on a separate 1x1 stand-in
+    for the metadata check. Every key in that dict can come from a text chunk
+    the sender named, and Pillow trusts some names: a chunk called
+    "transparency" or "icc_profile" makes convert() or a PNG save raise. Kept
+    apart, nothing that touches the pixels ever reads those values."""
     img = _open_checked(path)
+    metadata = Image.new("1", (1, 1))
+    metadata.info = dict(img.info)
+    frames = []
     for index, frame in enumerate(ImageSequence.Iterator(img)):
         if index >= MAX_FRAMES:
             break
         rgb = safe_convert(frame, "RGB")
-        if index == 0:
-            # convert() drops the container-level info dict; put it back so the
-            # metadata check reads GIF/PNG chunks off the frame it scans.
-            rgb.info = dict(img.info)
-        yield index, rgb
+        rgb.info = {}
+        frames.append((index, rgb))
+    return Loaded(frames, metadata)

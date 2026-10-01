@@ -32,13 +32,13 @@ def scan_image(path, use_ocr: bool = True, ocr_timeout=None,
     result = ImageResult(path=str(path))
 
     try:
-        frames = list(imageio.load_frames(path))
+        frames, meta = imageio.load(path)
     except imageio.ImageError as e:
         result.error = str(e)
         return result
 
     budget = ocr_mod.ScanBudget(max_seconds or None)
-    findings = []
+    findings = metadata.find(meta)
     ocr_gaps = []  # (frame index, why OCR did not cover it)
     for index, frame in frames:
         if index == 0:
@@ -80,7 +80,6 @@ def _scan_frame(image, use_ocr: bool, ocr_timeout, budget, lang):
     findings.extend(low_contrast_findings)
     findings.extend(overlay.find(gray))
     findings.extend(hifreq.find(gray))
-    findings.extend(metadata.find(image))
     tiny_strips = tiny_text.find_heuristic(gray)
 
     if not use_ocr:

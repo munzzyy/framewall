@@ -7,6 +7,7 @@ isn't installed - see tests/conftest.py::requires_tesseract. Run
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -434,3 +435,46 @@ def test_text_past_tesseracts_size_limit_is_still_read(tmp_path, size):
     result = scan_image(p)
     assert result.verdict == "dangerous", (result.ocr_used, result.notes, result.findings)
     assert result.ocr_used is True
+
+
+# --- a text chunk named after a Pillow setting must not crash the OCR pass ----
+
+POISONED = Path(__file__).resolve().parent.parent / "examples" / "poisoned-screenshot.png"
+
+
+def _crafted(tmp_path, key):
+    """examples/poisoned-screenshot.png with its Comment chunk kept and one
+    more chunk that borrows a name Pillow reads as a setting."""
+    from PIL import Image
+    from PIL.PngImagePlugin import PngInfo
+
+    src = Image.open(POISONED)
+    info = PngInfo()
+    for k, v in src.text.items():
+        info.add_text(k, v)
+    info.add_text(key, "notacolor")
+    p = tmp_path / "crafted.png"
+    src.save(p, pnginfo=info)
+    return p
+
+
+@pytest.mark.parametrize("key", ["transparency", "icc_profile"])
+def test_hostile_chunk_name_does_not_crash_the_ocr_pass(monkeypatch, tmp_path, key):
+    from framewall import imageio
+    from framewall.scanner import scan_image
+
+    monkeypatch.setattr(ocr_mod, "tesseract_path", lambda: "/nonexistent/tesseract")
+    monkeypatch.setattr(ocr_mod, "_run_tsv", lambda *a, **k: TSV_HEADER)
+    monkeypatch.setattr(ocr_mod, "ocr_functional", lambda lang=None: True)
+    p = _crafted(tmp_path, key)
+
+    result = scan_image(p)
+    assert result.error == ""
+    assert result.ocr_used is True
+    assert result.verdict == "dangerous"
+    fw005 = [f for f in result.findings if f.rule_id == "FW-005"]
+    assert any("png:Comment" in f.title for f in fw005)
+    assert any(f"png:{key}" in f.title and f.snippet == "notacolor" for f in fw005)
+
+    frames, _meta = imageio.load(p)
+    assert ocr_mod.ocr_region(frames[0][1], (260, 385, 900, 435)) == []

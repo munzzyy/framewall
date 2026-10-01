@@ -18,13 +18,17 @@ from ..finding import Finding, Severity
 RULE_ID = "FW-005"
 
 # Keys Pillow populates for ordinary, non-textual image plumbing. Skipped so
-# a ten-line JFIF/ICC blob doesn't get reported as "unexpected text".
+# a ten-line JFIF/ICC blob doesn't get reported as "unexpected text". Pillow
+# never gives these a str value; a str under one of these names came from a
+# text chunk that borrowed it, and is free text like any other.
 _BENIGN_KEYS = {
     "dpi", "jfif", "jfif_version", "jfif_unit", "jfif_density",
     "icc_profile", "exif", "transparency", "gamma", "srgb", "chromaticity",
     "photoshop", "adobe", "progressive", "progression", "loop", "duration",
-    "background", "version", "aspect", "interlace", "software",
+    "background", "version", "aspect", "interlace",
 }
+# Text keys ordinary tools write.
+_BENIGN_TEXT_KEYS = {"software"}
 _MIN_TEXT_LEN = 8
 
 # EXIF sub-directories the text-bearing tags actually live in. Image.getexif()
@@ -149,11 +153,15 @@ def _text_fields(image):
     for key, raw in (image.info or {}).items():
         value = _decode(raw)
         if isinstance(value, str) and len(value.strip()) >= _MIN_TEXT_LEN:
-            yield f"png:{key}", value.strip(), key.lower() in _BENIGN_KEYS
+            lowered = key.lower()
+            benign = lowered in _BENIGN_TEXT_KEYS or (
+                lowered in _BENIGN_KEYS and not isinstance(raw, str)
+            )
+            yield f"png:{key}", value.strip(), benign
 
     for field_name, text in _exif_fields(image).items():
-        tag = field_name.split(":", 1)[1]
-        yield field_name, text, tag.lower() in _BENIGN_KEYS
+        tag = field_name.split(":", 1)[1].lower()
+        yield field_name, text, tag in _BENIGN_KEYS or tag in _BENIGN_TEXT_KEYS
 
 
 def find(image) -> list:
