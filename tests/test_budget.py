@@ -137,7 +137,7 @@ def _three_frame_gif(tmp_path):
 
 
 def test_frames_past_the_budget_are_noted_not_scanned(tmp_path, monkeypatch):
-    from framewall import scanner
+    from framewall import ocr, scanner
 
     seen = []
     real = scanner._scan_frame
@@ -146,6 +146,10 @@ def test_frames_past_the_budget_are_noted_not_scanned(tmp_path, monkeypatch):
         seen.append(image.getpixel((0, 0)))
         return real(image, *args)
 
+    # Windows' monotonic clock ticks every 15.6 ms, so a real 1e-9 budget
+    # looks unspent for three whole frames there. Drive the clock by hand.
+    ticks = iter(range(10_000))
+    monkeypatch.setattr(ocr.time, "monotonic", lambda: float(next(ticks)))
     monkeypatch.setattr(scanner, "_scan_frame", spy)
     result = scan_image(_three_frame_gif(tmp_path), use_ocr=False, max_seconds=1e-9)
     assert len(seen) == 1
