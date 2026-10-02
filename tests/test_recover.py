@@ -50,6 +50,29 @@ def test_deskewed_counter_rotates():
     assert out.width >= gray.width and out.height >= gray.height
 
 
+def test_looks_sideways_on_text_turned_a_quarter():
+    gray = imageio.safe_convert(_images.sideways_injection(), "L")
+    assert recover.looks_sideways(gray)
+    turned_back = recover.quarter_turned(gray, 90)
+    assert not recover.looks_sideways(turned_back)
+
+
+def test_looks_sideways_is_false_on_ordinary_images():
+    """The sideways pass costs up to two OCR passes, so every upright image
+    the suite builds has to stay out of it."""
+    for name, gray in _images.parity_set():
+        if name.startswith("sideways"):
+            continue
+        assert not recover.looks_sideways(gray), name
+
+
+def test_quarter_turned_is_exact():
+    gray = imageio.safe_convert(_images.sideways_injection(), "L")
+    upright = imageio.safe_convert(_images.upright_banner(), "L")
+    assert recover.quarter_turned(gray, 270).tobytes() == upright.tobytes()
+    assert recover.quarter_turned(recover.quarter_turned(gray, 90), 270).tobytes() == gray.tobytes()
+
+
 # --- residual amplification (no OCR needed) -----------------------------------
 
 
@@ -84,6 +107,26 @@ def test_deskew_pass_reads_rotated_injection():
     gray = imageio.safe_convert(image, "L")
     findings, _words, _lines = injection_text.find(image, gray=gray)
     assert findings, "the deskew recovery pass should read 22-degree text"
+
+
+@requires_tesseract
+def test_sideways_pass_reads_text_turned_a_quarter():
+    image = _images.sideways_injection()
+    findings, _words, _lines = injection_text.find(image)
+    assert findings, "the sideways recovery pass should read quarter-turned text"
+    assert all("turning the image" in f.detail for f in findings)
+
+
+@requires_tesseract
+def test_sideways_pass_does_not_run_on_a_clean_screenshot(monkeypatch):
+    turned = []
+    real = recover.quarter_turned
+    monkeypatch.setattr(
+        recover, "quarter_turned", lambda gray, degrees: turned.append(degrees) or real(gray, degrees)
+    )
+    findings, _words, _lines = injection_text.find(_images.clean_screenshot())
+    assert findings == []
+    assert turned == []
 
 
 @requires_tesseract

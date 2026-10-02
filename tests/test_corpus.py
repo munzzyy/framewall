@@ -26,6 +26,7 @@ MALICIOUS_FIXTURES = {
     "rotated_injection": (_images.rotated_injection, Verdict.DANGEROUS),
     "tiny_corner_injection": (_images.tiny_corner_injection, Verdict.SUSPICIOUS),
     "edge_camouflage": (_images.edge_camouflage, Verdict.SUSPICIOUS),
+    "sideways_injection": (_images.sideways_injection, Verdict.DANGEROUS),
 }
 
 
@@ -96,6 +97,18 @@ def test_payload_in_a_later_frame_is_not_reported_clean(tmp_path):
         assert any("frame 1" in f.detail for f in result.findings)
 
 
+def test_tiny_text_stored_upright_under_an_orientation_tag_is_flagged(tmp_path):
+    """Turned per its EXIF tag, the tiny strip runs top to bottom and the
+    strip heuristic can miss it. The pixels as stored still get the check,
+    and only the text-direction checks come back from that second look."""
+    for orientation in (6, 8):
+        p = _images.with_orientation(_images.tiny_text_image(), tmp_path / f"t{orientation}.png", orientation)
+        result = scan_image(p, use_ocr=False)
+        stored = [f for f in result.findings if f.detail.startswith("[as stored")]
+        assert any(f.rule_id == "FW-003" for f in stored), result.findings
+        assert all(f.rule_id in ("FW-001", "FW-003") for f in stored)
+
+
 def test_benign_fixture_stays_clean_across_repeated_scans(tmp_path):
     """Determinism check: the heuristics have no randomness, so scanning the
     same clean image twice must agree."""
@@ -151,3 +164,25 @@ def test_injection_recall_across_pattern_families(tmp_path):
         p = _save(tmp_path, f"phrase{i}", _images.low_contrast_injection(text=phrase))
         result = scan_image(p, use_ocr=True)
         assert result.verdict == Verdict.DANGEROUS.value, (phrase, result.findings)
+
+
+@requires_tesseract
+def test_payload_stored_sideways_and_shown_level_by_exif_is_dangerous(tmp_path):
+    """Browsers apply EXIF orientation, so this displays as a level line of
+    text. Read in the stored grid, it is sideways."""
+    for ext in ("jpg", "png"):
+        p = _images.with_orientation(_images.sideways_injection(), tmp_path / f"side.{ext}", 6)
+        result = scan_image(p)
+        assert result.width == 1000
+        assert result.verdict == Verdict.DANGEROUS.value, (ext, result.findings)
+
+
+@requires_tesseract
+def test_payload_level_in_the_stored_pixels_survives_an_orientation_tag(tmp_path):
+    """The other way round: a pipeline that ignores the tag hands the model
+    the stored pixels, which read level, while the turned view is upside
+    down, mirrored or sideways."""
+    for orientation in (2, 3, 4, 6, 8):
+        p = _images.with_orientation(_images.upright_banner(), tmp_path / f"o{orientation}.png", orientation)
+        result = scan_image(p)
+        assert result.verdict == Verdict.DANGEROUS.value, (orientation, result.findings)

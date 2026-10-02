@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 from PIL import Image, ImageSequence, UnidentifiedImageError
 
@@ -118,10 +118,34 @@ def load_image(source, name=None) -> Image.Image:
     return rgb
 
 
+# EXIF Orientation value -> the transpose that shows the image upright, the
+# same table ImageOps.exif_transpose uses.
+_UPRIGHT = {
+    2: Image.Transpose.FLIP_LEFT_RIGHT,
+    3: Image.Transpose.ROTATE_180,
+    4: Image.Transpose.FLIP_TOP_BOTTOM,
+    5: Image.Transpose.TRANSPOSE,
+    6: Image.Transpose.ROTATE_270,
+    7: Image.Transpose.TRANSVERSE,
+    8: Image.Transpose.ROTATE_90,
+}
+
+
+def _upright_transpose(frame):
+    """The transpose an EXIF-aware viewer applies to `frame`, or None. A tag
+    Pillow can't parse counts as no tag; the stored pixels get scanned anyway."""
+    try:
+        return _UPRIGHT.get(frame.getexif().get(0x0112))
+    except Exception:
+        return None
+
+
 class Loaded(NamedTuple):
-    frames: list  # (index, rgb_frame) pairs
+    frames: list  # (index, rgb_frame) pairs, turned the way a viewer shows them
     metadata: Image.Image  # 1x1 stand-in carrying the file's info dict
     truncated: bool = False  # the file has frames past MAX_FRAMES
+    as_stored: Optional[dict] = None  # index -> rgb pixels before EXIF orientation,
+    # only for frames whose Orientation tag turned them
 
 
 def load(source, name=None) -> Loaded:
@@ -138,15 +162,26 @@ def load(source, name=None) -> Loaded:
     for the metadata check. Every key in that dict can come from a text chunk
     the sender named, and Pillow trusts some names: a chunk called
     "transparency" or "icc_profile" makes convert() or a PNG save raise. Kept
-    apart, nothing that touches the pixels ever reads those values."""
+    apart, nothing that touches the pixels ever reads those values.
+
+    A frame with an EXIF Orientation tag is turned the way a browser shows
+    it, so text stored sideways and displayed level gets read level. Its
+    pixels as stored come back too, in `as_stored`: a pipeline that ignores
+    the tag hands those to the model instead, and the scan has to cover
+    both."""
     img = _open_checked(source, name)
     metadata = Image.new("1", (1, 1))
     metadata.info = dict(img.info)
     frames = []
+    as_stored = {}
     for index, frame in enumerate(ImageSequence.Iterator(img)):
         if index >= MAX_FRAMES:
-            return Loaded(frames, metadata, truncated=True)
+            return Loaded(frames, metadata, True, as_stored)
         rgb = safe_convert(frame, "RGB")
         rgb.info = {}
+        turn = _upright_transpose(frame)
+        if turn is not None:
+            as_stored[index] = rgb
+            rgb = rgb.transpose(turn)
         frames.append((index, rgb))
-    return Loaded(frames, metadata)
+    return Loaded(frames, metadata, False, as_stored)

@@ -16,7 +16,12 @@ leaving the payload fully present in the pixels:
   banding lines up, and one extra OCR pass on the counter-rotated image
   reads the payload.
 
-Both transforms are pure Pillow and cheap relative to an OCR pass. The
+A third case sits outside that sweep: text turned a full quarter, the way
+a payload stored sideways looks to a pipeline that ignores EXIF
+orientation. Its edge map bands by column, and one OCR pass per quarter
+turn reads it.
+
+All three transforms are pure Pillow and cheap relative to an OCR pass. The
 scanner runs them only when the normal passes found no injection text, and
 only inside the per-image time budget.
 """
@@ -52,6 +57,11 @@ SKEW_MIN_SCORE = 1.0  # absolute floor; a blank or featureless image scores ~0
 SKEW_MIN_PEAK_OVER_MEDIAN = 4.0
 SKEW_MIN_PEAK_OVER_MIRROR = 3.0
 
+# Sideways pass: text a quarter turn off sits outside the skew sweep and bands
+# the edge map by column instead of by row. Measured: a page of sideways text
+# scores about 4 columns over rows, 66 real app screenshots at most 1.53.
+SIDEWAYS_MIN_RATIO = 2.5
+
 
 def residual_text(gray: Image.Image) -> Image.Image:
     """A black-on-white rendering of detail that sits near its background.
@@ -82,9 +92,7 @@ def detect_skew(gray: Image.Image) -> Optional[int]:
     peaks when the rotation angle matches the text. A flat or symmetric
     profile across the sweep means no rotated text worth an extra OCR pass.
     """
-    thumb = gray.copy()
-    thumb.thumbnail((SKEW_THUMBNAIL, SKEW_THUMBNAIL), Image.BILINEAR)
-    edges = thumb.filter(ImageFilter.FIND_EDGES)
+    edges = _edge_thumbnail(gray)
 
     scores = {}
     for angle in range(-SKEW_MAX_DEGREES, SKEW_MAX_DEGREES + 1, SKEW_STEP_DEGREES):
@@ -107,3 +115,25 @@ def detect_skew(gray: Image.Image) -> Optional[int]:
 def deskewed(gray: Image.Image, angle: int) -> Image.Image:
     """`gray` counter-rotated so text detected at `angle` reads upright."""
     return gray.rotate(angle, expand=True, resample=Image.BICUBIC, fillcolor=255)
+
+
+def _edge_thumbnail(gray: Image.Image) -> Image.Image:
+    thumb = gray.copy()
+    thumb.thumbnail((SKEW_THUMBNAIL, SKEW_THUMBNAIL), Image.BILINEAR)
+    return thumb.filter(ImageFilter.FIND_EDGES)
+
+
+def looks_sideways(gray: Image.Image) -> bool:
+    """Whether the text in `gray` mostly runs top to bottom: its edge map
+    bands by column far more than by row. Cheap enough to ask of every image
+    that reaches the recovery passes."""
+    edges = _edge_thumbnail(gray)
+    rows = _projection_variance(edges, 0)
+    cols = _projection_variance(edges, 90)
+    return cols >= SKEW_MIN_SCORE and cols >= rows * SIDEWAYS_MIN_RATIO
+
+
+def quarter_turned(gray: Image.Image, degrees: int) -> Image.Image:
+    """`gray` turned 90 or 270 degrees counterclockwise, exactly."""
+    turn = Image.Transpose.ROTATE_90 if degrees == 90 else Image.Transpose.ROTATE_270
+    return gray.transpose(turn)

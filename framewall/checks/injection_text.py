@@ -14,9 +14,10 @@ every pass is charged against the scan's wall-clock budget. Anything skipped
 for either reason lands in the budget's notes so a truncated scan reports
 itself as truncated.
 
-When the normal passes match nothing, two recovery passes (see recover.py)
+When the normal passes match nothing, the recovery passes (see recover.py)
 take one more swing each at text built to defeat plain OCR: a residual pass
-for near-background text, and a deskew pass for text rotated off-axis.
+for near-background text, a deskew pass for text rotated off-axis, and a
+sideways pass for text turned a quarter.
 """
 
 from __future__ import annotations
@@ -99,20 +100,10 @@ def _recovery_findings(gray, per_pass, lang, budget) -> list:
             "passes; the scan is partial"
         )
         return []
-    try:
-        words, lines = ocr_mod.ocr_image(
-            recover.residual_text(gray), timeout=budget.clamp(per_pass), lang=lang
-        )
-    except ocr_mod.OcrTimeout:
-        budget.note("tesseract timed out on the residual recovery pass")
-        words, lines = [], []
-    except ocr_mod.OcrFailed as e:
-        budget.note(f"tesseract failed on the residual recovery pass ({e})")
-        words, lines = [], []
-    segments = [ln.text for ln in lines] if lines else [" ".join(w.text for w in words)]
-    found = _findings_from(
-        segments, words,
+    found = _recovery_pass(
+        recover.residual_text(gray), "residual", per_pass, lang, budget,
         provenance="Recovered by amplifying detail that sits nearly flush with the background.",
+        locate=True,
     )
     if found:
         return found
@@ -124,25 +115,45 @@ def _recovery_findings(gray, per_pass, lang, budget) -> list:
         )
         return []
     angle = recover.detect_skew(gray)
-    if angle is None:
-        return []
-    try:
-        words, lines = ocr_mod.ocr_image(
-            recover.deskewed(gray, angle), timeout=budget.clamp(per_pass), lang=lang
+    if angle is not None:
+        found = _recovery_pass(
+            recover.deskewed(gray, angle), "deskew", per_pass, lang, budget,
+            provenance=f"Recovered after counter-rotating the image {angle} degrees.",
         )
+        if found:
+            return found
+
+    if not recover.looks_sideways(gray):
+        return []
+    for degrees in (270, 90):
+        if budget.exhausted():
+            budget.note(
+                "the scan time budget ran out before the sideways recovery pass; "
+                "the scan is partial"
+            )
+            return []
+        found = _recovery_pass(
+            recover.quarter_turned(gray, degrees), "sideways", per_pass, lang, budget,
+            provenance=f"Recovered after turning the image {degrees} degrees.",
+        )
+        if found:
+            return found
+    return []
+
+
+def _recovery_pass(image, name, per_pass, lang, budget, provenance, locate=False) -> list:
+    try:
+        words, lines = ocr_mod.ocr_image(image, timeout=budget.clamp(per_pass), lang=lang)
     except ocr_mod.OcrTimeout:
-        budget.note("tesseract timed out on the deskew recovery pass")
+        budget.note(f"tesseract timed out on the {name} recovery pass")
         return []
     except ocr_mod.OcrFailed as e:
-        budget.note(f"tesseract failed on the deskew recovery pass ({e})")
+        budget.note(f"tesseract failed on the {name} recovery pass ({e})")
         return []
     segments = [ln.text for ln in lines] if lines else [" ".join(w.text for w in words)]
-    # Word boxes from the rotated frame don't map back to image coordinates,
-    # so these findings carry no region - the snippet still says what was read.
-    return _findings_from(
-        segments, [],
-        provenance=f"Recovered after counter-rotating the image {angle} degrees.",
-    )
+    # Word boxes from a rotated frame don't map back to image coordinates, so
+    # those findings carry no region; the snippet still says what was read.
+    return _findings_from(segments, words if locate else [], provenance=provenance)
 
 
 def _findings_from(segments, locate_words, provenance=None) -> list:

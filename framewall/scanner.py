@@ -23,6 +23,8 @@ from .verdict import compute as compute_verdict
 DEFAULT_MAX_SCAN_SECONDS = 30  # whole-image ceiling across every OCR pass;
 # generous for a real scan, fatal for the hang-the-hook attack. 0/None lifts it.
 
+_ORIENTATION_DEPENDENT = {injection_text.RULE_ID, tiny_text.RULE_ID}
+
 _STRIP_OCR_PAD = 3  # px of context around a tiny strip before it is OCR'd,
 # so glyph edges the block grid clipped off stay readable
 
@@ -49,7 +51,7 @@ def _scan(source, label, use_ocr, ocr_timeout, max_seconds, lang) -> ImageResult
     result = ImageResult(path=label)
 
     try:
-        frames, meta, truncated = imageio.load(source, name=label)
+        frames, meta, truncated, as_stored = imageio.load(source, name=label)
     except imageio.ImageError as e:
         result.error = str(e)
         return result
@@ -74,6 +76,14 @@ def _scan(source, label, use_ocr, ocr_timeout, max_seconds, lang) -> ImageResult
         frame_findings, skipped = _scan_frame(frame, use_ocr, ocr_timeout, budget, lang)
         if skipped:
             ocr_gaps.append((index, skipped))
+        stored = (as_stored or {}).get(index)
+        if stored is not None:
+            stored_findings, stored_skipped = _scan_as_stored(
+                stored, use_ocr, ocr_timeout, budget, lang
+            )
+            frame_findings.extend(stored_findings)
+            if stored_skipped and not skipped:
+                ocr_gaps.append((index, stored_skipped))
         if index > 0:
             # Tag which frame a finding came from so a CLEAN-looking first frame
             # can't hide an attack in a later one of an animated GIF / TIFF.
@@ -96,6 +106,26 @@ def _scan(source, label, use_ocr, ocr_timeout, max_seconds, lang) -> ImageResult
     result.notes = list(budget.notes)
     result.verdict = compute_verdict(findings).value
     return result
+
+
+def _scan_as_stored(image, use_ocr, ocr_timeout, budget, lang):
+    """The second look at a frame EXIF orientation turned: its pixels as
+    stored, what a pipeline that ignores the tag shows the model. Only the
+    checks that depend on which way the text runs are kept; the pixel-shape
+    ones already ran on the same pixels turned."""
+    if budget.exhausted():
+        budget.note(
+            "the scan time budget ran out before the pixels were read as stored, "
+            "without their EXIF orientation; the scan is partial"
+        )
+        return [], ""
+    found, skipped = _scan_frame(image, use_ocr, ocr_timeout, budget, lang)
+    kept = [
+        dataclasses.replace(f, detail=f"[as stored, before EXIF orientation] {f.detail}")
+        for f in found
+        if f.rule_id in _ORIENTATION_DEPENDENT
+    ]
+    return kept, skipped
 
 
 def _scan_frame(image, use_ocr: bool, ocr_timeout, budget, lang):

@@ -128,6 +128,9 @@ framewall scan huge.png --max-scan-seconds 60  # whole-image time ceiling (defau
 framewall reads PNG, JPEG, GIF, BMP, TIFF and WebP. A file in any other
 format is an error (exit 2) even when its name ends in `.png`, so a crafted
 file can't steer the scan into one of Pillow's other decoders.
+An image with an EXIF orientation tag is scanned turned the way a browser
+shows it, then read again as stored. Some agent pipelines apply the tag and
+some don't, so a payload has to be caught either way.
 
 Every OCR pass for one image draws on a single wall-clock budget
 (`--max-scan-seconds`, default 30), and the number of flagged regions that
@@ -145,12 +148,13 @@ completed clean one.
 **With tesseract** (the default when it's found): all six checks run,
 including the core one - OCR the image, OCR any flagged region a second
 time after a local contrast boost and upscale, and scan whatever text comes
-back for directives aimed at an agent. When none of that matches, two
-recovery passes take one more swing each at text built to defeat plain OCR:
-a residual pass that amplifies detail sitting nearly flush with its
-background (catches text one shade off white), and a deskew pass that
-detects off-axis text and re-reads the image counter-rotated. This is the
-only mode that actually reads the words instead of just their shape.
+back for directives aimed at an agent. When none of that matches, three
+recovery passes take one more swing each at text built to defeat plain OCR.
+A residual pass amplifies detail sitting nearly flush with its background
+(catches text one shade off white). A deskew pass detects off-axis text and
+re-reads the image counter-rotated. A sideways pass re-reads text turned a
+full quarter. This is the only mode that actually reads the words instead of
+just their shape.
 
 **Without tesseract** (`--no-ocr`, or tesseract just isn't installed): the
 image-analysis heuristics still run - low-contrast region shape, fake

@@ -1,23 +1,38 @@
 # Checks reference
 
-Every detection layer framewall runs, what it looks for, and what it needs
-to run at all. A test keeps this file in sync with the code, so a check
-cannot exist without being documented here.
+Every detection layer framewall runs: what it looks for and what it needs
+to run at all. A test keeps this file in sync with the code. A check cannot
+exist without being documented here.
 
 ## FW-001
 
 Injection text. Severity: high, always.
 
-Needs OCR. Reads the image with tesseract - once at full resolution, and
-again on any region FW-002 flagged, after a local contrast boost - then
-scans the recovered text for directives aimed at an agent rather than a
-human: "ignore previous instructions", "disregard your prior instructions",
-"you are now a...", "new instructions:", a `system:` label, "do not tell the
-user", "reveal your system prompt", a send/upload verb paired with a nearby
-URL, and tool-call-shaped strings like `<tool_call>` or `"function_call":`.
+Needs OCR. Reads the image with tesseract once at full resolution and again
+on any region FW-002 flagged (after a local contrast boost). Then it scans
+the recovered text for directives aimed at an agent rather than a human:
+
+- "ignore previous instructions" or "disregard your prior instructions"
+- "you are now a..." and "new instructions:"
+- a `system:` label
+- "do not tell the user" and "reveal your system prompt"
+- a send or upload verb paired with a nearby URL
+- tool-call-shaped strings like `<tool_call>` or `"function_call":`
 
 This is the core detector - everything else is a proxy for "something looks
 off", and this one reads the actual words.
+
+When nothing matches, three recovery passes each get one more OCR pass.
+One amplifies detail that sits nearly flush with the background. One
+counter-rotates text that sits off-axis. One turns the image a quarter when
+its text runs top to bottom. The first two exist for the white-on-white and
+rotated-skew techniques in the
+[injection-fixtures](https://github.com/munzzyy/injection-fixtures) corpus.
+
+An image with an EXIF orientation tag is read turned the way a viewer shows
+it and again as stored. FW-001 and FW-003 findings from the stored pixels
+start with `[as stored, before EXIF orientation]` and their regions are in
+that grid.
 
 Don't feed the image to an agent once this fires. If the text is legitimate
 (a tutorial screenshot showing a prompt-injection example, say) it's still
@@ -35,28 +50,28 @@ rendered a few shades off its own background. A single-block-wide seam
 between two flat, similarly-colored UI panels is filtered out on purpose;
 real hidden text is at least a few characters wide.
 
-Contrast-boost the region, or re-scan with OCR, to see what it actually says.
+Contrast-boost the region or re-scan with OCR to see what it actually says.
 
 ## FW-003
 
 Text below legible size. Severity: medium.
 
-With OCR, this measures tesseract's own line boxes (not individual word
+With OCR this measures tesseract's own line boxes (not individual word
 boxes - a short lowercase word like "is" reads far shorter than the line
 it's actually sitting on and would look tiny on its own). Without OCR it
-falls back to a coarser, Pillow-only estimate: thin, gap-containing strips
-of high-contrast detail, with straight edges (panel borders, button
-outlines) explicitly excluded since a solid line and a line of text are the
-same shape at this resolution.
+falls back to a coarser Pillow-only estimate: thin strips of high-contrast
+detail with gaps in them. Straight edges (panel borders and button
+outlines) are excluded on purpose, since a solid line and a line of text
+are the same shape at this resolution.
 
-The strip estimate also runs alongside OCR, not only instead of it: text
+The strip estimate also runs alongside OCR and not only instead of it. Text
 below tesseract's recognition floor produces no line box at all, which used
 to be this check's blind spot. A flagged strip that no OCR line covers gets
-cropped, contrast-boosted, upscaled, and read again; if words come back,
-the strip is reported with the recovered text quoted.
+cropped, contrast-boosted, upscaled and read again. If words come back the
+strip is reported with the recovered text quoted.
 
-Fine print is normal on its own - check whether the recovered text, or
-without OCR the flagged region, carries directives aimed at an agent.
+Fine print is normal on its own. Check whether the recovered text (or
+without OCR the flagged region) carries directives aimed at an agent.
 
 ## FW-004
 
@@ -71,7 +86,7 @@ color), and boxes that span nearly the full width or height are treated as
 ordinary page chrome (a header, a toolbar) rather than an injected box.
 
 Purely a shape heuristic - it has no idea what the box says and will flag a
-real toast notification, cookie banner, or tooltip that happens to land in
+real toast notification, cookie banner or tooltip that happens to land in
 the same shape.
 
 Look at the region directly. Treat the image as untrusted if the text
@@ -83,7 +98,7 @@ Metadata / steganography-lite. Severity: medium, or high if the embedded
 text matches an injection pattern.
 
 Pillow only, no OCR needed. Reads PNG tEXt/iTXt chunks and EXIF text fields
-(comment, description, user comment, and similar) and scans every
+(comment, description, user comment and the like) and scans every
 non-trivial value for injection phrasing, whatever its key. A value that
 matches nothing still gets a medium finding as unexpected text, unless its
 key is ordinary plumbing that a normal export carries:
@@ -112,12 +127,12 @@ fine checkerboard or stripe field, the pattern used to stamp text into a
 region OCR binarization cannot survive. Real text is two-tone but aperiodic;
 photos and noise are not two-tone; flat fills and gradients have no
 contrast. The requirement that the region be tall as well as wide keeps
-table rules, dashed borders, and box-drawing lines out.
+table rules, dashed borders and box-drawing lines out.
 
 The one legitimate collision is ordered (Bayer-style) dithering, which is a
 periodic two-tone field on purpose; a screenshot region carrying one will
 trip this check and deserves the same second look.
 
-The check never reads any text - it flags the pattern, not what is hidden
-in it. Look at the region directly, or re-render the screenshot without the
-patterned area, before letting an agent read it.
+The check never reads any text. It flags the pattern and not what is
+hidden in it. Look at the region directly or re-render the screenshot
+without the patterned area before letting an agent read it.

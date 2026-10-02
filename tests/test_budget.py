@@ -163,3 +163,10 @@ def test_frames_past_the_frame_cap_are_noted(tmp_path, monkeypatch):
     monkeypatch.setattr(imageio, "MAX_FRAMES", 2)
     result = scan_image(_three_frame_gif(tmp_path), use_ocr=False)
     assert any("only the first 2 frames" in n for n in result.notes)
+
+
+def test_a_spent_budget_skips_the_stored_view_out_loud(tmp_path):
+    p = _images.with_orientation(_images.clean_screenshot(), tmp_path / "turned.png", 6)
+    result = scan_image(p, use_ocr=False, max_seconds=1e-9)
+    assert any("as stored" in note and "partial" in note for note in result.notes)
+    assert scan_image(p, use_ocr=False).notes == []
