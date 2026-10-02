@@ -218,14 +218,14 @@ test suite. The OCR-gated tests live in `tests/test_ocr.py`,
 ### As a Claude Code hook
 
 CI scans images you already have. A hook scans the ones an agent is about to
-read, at the moment it tries. [`hooks/framewall-guard.sh`](hooks/framewall-guard.sh)
-is a `PreToolUse` guard: register it on the `Read` tool and it runs framewall
-on any image the agent opens, blocks the read when the verdict is
-`DANGEROUS`, and asks you to confirm when it's `SUSPICIOUS`. This is the piece
+read, at the moment it tries. `framewall guard` is a `PreToolUse` guard:
+register it on the `Read` tool and it runs framewall on any image the agent
+opens, blocks the read when the verdict is `DANGEROUS`, and asks you to
+confirm when it's `SUSPICIOUS`. This is the piece
 [What it does not do](#what-it-does-not-do) has always pointed at - the gate
 before a screenshot reaches the agent, not after.
 
-Register it in `~/.claude/settings.json` (use the absolute path to the script):
+Register it in `~/.claude/settings.json`:
 
 ```json
 {
@@ -236,7 +236,7 @@ Register it in `~/.claude/settings.json` (use the absolute path to the script):
         "hooks": [
           {
             "type": "command",
-            "command": "/absolute/path/to/framewall/hooks/framewall-guard.sh",
+            "command": "framewall guard",
             "timeout": 60
           }
         ]
@@ -245,6 +245,12 @@ Register it in `~/.claude/settings.json` (use the absolute path to the script):
   }
 }
 ```
+
+If `framewall` isn't on the PATH Claude Code runs hooks with, use its
+absolute path (`which framewall` prints it; pipx puts it in
+`~/.local/bin`). [`hooks/framewall-guard.sh`](hooks/framewall-guard.sh) does
+the same job from a checkout and behaves identically, for settings that
+already point at it.
 
 It only scans image files and passes everything else straight through. The
 `SUSPICIOUS` verdict asks rather than denies on purpose: the overlay and
@@ -264,9 +270,9 @@ data is missing) or stopped early is not the same as a full clean scan. The
 read is allowed, and Claude Code shows you a message saying the scan was
 incomplete and why; `framewall doctor` tells you what to fix. Set
 `FRAMEWALL_GUARD_FAIL=closed` to get an ask for these instead, and a deny for
-the no-verdict case. If framewall isn't installed at all, the read is allowed
-with the same kind of message, so a missing dependency can't wall you off
-from every screenshot.
+the no-verdict case. If the shell script can't find framewall at all, the
+read is allowed with the same kind of message, so a missing dependency can't
+wall you off from every screenshot.
 
 ### Output formats
 

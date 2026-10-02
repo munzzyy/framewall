@@ -17,6 +17,8 @@ Not tagged yet. Installing from main gets this version.
   `--max-scan-seconds`. Each image gets one time budget for all its OCR passes
   and frames. Flagged regions are merged and capped. Anything cut short shows
   up as a note saying the scan is partial.
+- `framewall guard`, the Claude Code hook as a subcommand. It works from any
+  install, Windows included, and behaves like `hooks/framewall-guard.sh`.
 - `framewall doctor` checks whether tesseract can read text in the language
   a scan would use. When it cannot, it names the package to install.
 - `--require-ocr` exits 2 when any image was scanned without OCR or only in

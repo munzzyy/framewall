@@ -1,136 +1,171 @@
-"""The Claude Code PreToolUse guard in hooks/framewall-guard.sh.
+"""The Claude Code PreToolUse guard, through both entry points: `framewall
+guard` and hooks/framewall-guard.sh. They must behave the same.
 
-POSIX only. The tests exec the .sh directly, build PATH with ':', and rely on
-the executable bit, none of which mean anything on Windows - so the whole
-module skips there rather than failing on WinError 193.
+The shell script only runs where there is a shell to exec it, so its cases
+skip on Windows. The `framewall guard` cases run everywhere: they call the
+guard in-process and point its scan at a stub framewall, a small Python
+script that prints whatever scan output the test wants. The shell cases put
+that same stub on PATH as `framewall`.
 """
 
+import io
 import json
 import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from framewall import guard
 from tests.conftest import OCR_WORKS
-
-pytestmark = pytest.mark.skipif(
-    os.name == "nt", reason="the guard is a POSIX shell hook; nothing to exec on Windows"
-)
 
 REPO = Path(__file__).resolve().parent.parent
 HOOK = REPO / "hooks" / "framewall-guard.sh"
 POISONED = REPO / "examples" / "poisoned-screenshot.png"
 CLEAN = REPO / "examples" / "clean-screenshot.png"
 
-
-def run(payload, env=None, cwd=None):
-    return subprocess.run(
-        [str(HOOK)],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=cwd,
-    )
+POSIX_ONLY = pytest.mark.skipif(
+    os.name == "nt", reason="the shell guard is a POSIX script; nothing to exec on Windows"
+)
+ENTRY_POINTS = [pytest.param("sh", marks=POSIX_ONLY), "py"]
 
 
-def test_dangerous_image_is_denied():
-    r = run({"tool_name": "Read", "tool_input": {"file_path": str(POISONED)}})
-    assert r.returncode == 0
-    out = json.loads(r.stdout)["hookSpecificOutput"]
-    assert out["permissionDecision"] == "deny"
-    assert "DANGEROUS" in out["permissionDecisionReason"]
+def _read(path):
+    return {"tool_name": "Read", "tool_input": {"file_path": str(path)}}
 
 
-def test_clean_image_passes_through():
-    r = run({"tool_name": "Read", "tool_input": {"file_path": str(CLEAN)}})
-    assert r.returncode == 0
+def _stub(tmp_path, body):
+    """A fake framewall: Python that gets the scan's argv and does `body`."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    stub = bindir / "framewall"
+    stub.write_text(f"#!/usr/bin/env python3\nimport json, sys, time\n{body}\n")
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    return stub
+
+
+def _printing(tmp_path, report):
+    return _stub(tmp_path, f"print(json.dumps({report!r}))")
+
+
+def _image(tmp_path, name="shot.png"):
+    img = tmp_path / name
+    img.write_bytes(b"not really a png")
+    return img
+
+
+def run(entry, payload, monkeypatch, stub=None, fail=None, cwd=None):
+    """(exit code, stdout) of one guard run."""
+    if fail:
+        monkeypatch.setenv("FRAMEWALL_GUARD_FAIL", fail)
+    else:
+        monkeypatch.delenv("FRAMEWALL_GUARD_FAIL", raising=False)
+    if entry == "sh":
+        env = dict(os.environ)
+        if stub is not None:
+            env["PATH"] = f"{stub.parent}{os.pathsep}{env['PATH']}"
+        r = subprocess.run(
+            [str(HOOK)], input=json.dumps(payload), capture_output=True, text=True,
+            env=env, cwd=cwd,
+        )
+        return r.returncode, r.stdout
+    if stub is not None:
+        real = guard._scan_command
+        monkeypatch.setattr(
+            guard, "_scan_command", lambda path, seconds: [sys.executable, str(stub)] + real(path, seconds)[3:]
+        )
+    out = io.StringIO()
+    code = guard.main(io.StringIO(json.dumps(payload)), out)
+    return code, out.getvalue()
+
+
+def _decision(stdout):
+    return json.loads(stdout)["hookSpecificOutput"]
+
+
+# --- real scans, no stub ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_dangerous_image_is_denied(entry, monkeypatch):
+    monkeypatch.chdir(REPO)
+    code, out = run(entry, _read(POISONED), monkeypatch)
+    assert code == 0
+    decision = _decision(out)
+    assert decision["permissionDecision"] == "deny"
+    assert "DANGEROUS" in decision["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_clean_image_passes_through(entry, monkeypatch):
+    monkeypatch.chdir(REPO)
+    code, out = run(entry, _read(CLEAN), monkeypatch)
+    assert code == 0
     if OCR_WORKS:
-        assert r.stdout.strip() == ""
+        assert out.strip() == ""
     else:
         # No English OCR data on this machine: still allowed, but the user is told.
-        out = json.loads(r.stdout)
-        assert "hookSpecificOutput" not in out
-        assert "OCR did not run" in out["systemMessage"]
+        message = json.loads(out)
+        assert "hookSpecificOutput" not in message
+        assert "OCR did not run" in message["systemMessage"]
 
 
-def test_non_image_is_ignored():
-    r = run({"tool_name": "Read", "tool_input": {"file_path": str(REPO / "README.md")}})
-    assert r.returncode == 0
-    assert r.stdout.strip() == ""
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_non_image_is_ignored(entry, monkeypatch, tmp_path):
+    stub = _stub(tmp_path, "raise SystemExit('a non-image must not be scanned')")
+    code, out = run(entry, _read(REPO / "README.md"), monkeypatch, stub=stub)
+    assert (code, out.strip()) == (0, "")
 
 
-def test_missing_file_is_ignored():
-    r = run({"tool_name": "Read", "tool_input": {"file_path": "/no/such/image.png"}})
-    assert r.returncode == 0
-    assert r.stdout.strip() == ""
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_missing_file_is_ignored(entry, monkeypatch):
+    code, out = run(entry, _read("/no/such/image.png"), monkeypatch)
+    assert (code, out.strip()) == (0, "")
 
 
-def test_suspicious_verdict_asks(tmp_path):
-    # Stub framewall on PATH so the ask branch is exercised without needing a
-    # real image that lands on SUSPICIOUS.
-    stub = tmp_path / "framewall"
-    stub.write_text(
-        '#!/usr/bin/env bash\n'
-        'echo \'{"images":[{"verdict":"suspicious"}]}\'\n'
-    )
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-    img = tmp_path / "shot.png"
-    img.write_bytes(b"not really a png")
-    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
-    r = run({"tool_name": "Read", "tool_input": {"file_path": str(img)}}, env=env)
-    assert r.returncode == 0
-    out = json.loads(r.stdout)["hookSpecificOutput"]
-    assert out["permissionDecision"] == "ask"
+# --- every verdict branch, through a stub scanner ---------------------------------
 
 
-def _stub_framewall(tmp_path, body):
-    stub = tmp_path / "framewall"
-    stub.write_text(f"#!/usr/bin/env bash\n{body}\n")
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-    img = tmp_path / "shot.png"
-    img.write_bytes(b"not really a png")
-    return stub, img
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_uppercase_extension_is_scanned(entry, monkeypatch, tmp_path):
+    stub = _printing(tmp_path, {"images": [{"verdict": "dangerous"}]})
+    _code, out = run(entry, _read(_image(tmp_path, "SHOT.PNG")), monkeypatch, stub=stub)
+    assert _decision(out)["permissionDecision"] == "deny"
 
 
-def test_no_verdict_asks_by_default(tmp_path):
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_suspicious_verdict_asks(entry, monkeypatch, tmp_path):
+    stub = _printing(tmp_path, {"images": [{"verdict": "suspicious"}]})
+    code, out = run(entry, _read(_image(tmp_path)), monkeypatch, stub=stub)
+    assert code == 0
+    decision = _decision(out)
+    assert decision["permissionDecision"] == "ask"
+    assert "SUSPICIOUS" in decision["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_no_verdict_asks_by_default(entry, monkeypatch, tmp_path):
     # framewall present but emitting no readable verdict (a scan error, a crash,
     # an unscannable image) must NOT silently allow the read - that's the whole
     # bypass this guard closes. Default to ask.
-    _stub, img = _stub_framewall(tmp_path, 'echo "tesseract exploded, not json" >&2')
-    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
-    env.pop("FRAMEWALL_GUARD_FAIL", None)
-    r = run({"tool_name": "Read", "tool_input": {"file_path": str(img)}}, env=env)
-    assert r.returncode == 0
-    out = json.loads(r.stdout)["hookSpecificOutput"]
-    assert out["permissionDecision"] == "ask"
-    assert "not scanned" in out["permissionDecisionReason"].lower() or "no" in out["permissionDecisionReason"].lower()
+    stub = _stub(tmp_path, "print('tesseract exploded, not json', file=sys.stderr)")
+    code, out = run(entry, _read(_image(tmp_path)), monkeypatch, stub=stub)
+    assert code == 0
+    decision = _decision(out)
+    assert decision["permissionDecision"] == "ask"
+    assert "NOT scanned (tesseract exploded, not json" in decision["permissionDecisionReason"]
 
 
-def test_no_verdict_denies_when_fail_closed(tmp_path):
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_no_verdict_denies_when_fail_closed(entry, monkeypatch, tmp_path):
     # Opt-in strict mode turns the same no-verdict outcome into a hard block.
-    _stub, img = _stub_framewall(tmp_path, 'echo "boom" >&2')
-    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}", FRAMEWALL_GUARD_FAIL="closed")
-    r = run({"tool_name": "Read", "tool_input": {"file_path": str(img)}}, env=env)
-    assert r.returncode == 0
-    out = json.loads(r.stdout)["hookSpecificOutput"]
-    assert out["permissionDecision"] == "deny"
-
-
-def _read(img):
-    return {"tool_name": "Read", "tool_input": {"file_path": str(img)}}
-
-
-def _stub_env(tmp_path, report, fail=None):
-    _stub, img = _stub_framewall(tmp_path, f"echo '{json.dumps(report)}'")
-    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
-    env.pop("FRAMEWALL_GUARD_FAIL", None)
-    if fail:
-        env["FRAMEWALL_GUARD_FAIL"] = fail
-    return img, env
+    stub = _stub(tmp_path, "print('boom', file=sys.stderr)")
+    code, out = run(entry, _read(_image(tmp_path)), monkeypatch, stub=stub, fail="closed")
+    assert code == 0
+    assert _decision(out)["permissionDecision"] == "deny"
 
 
 DEGRADED_CLEAN = {
@@ -141,39 +176,98 @@ DEGRADED_CLEAN = {
 }
 
 
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
 @pytest.mark.parametrize("case", sorted(DEGRADED_CLEAN))
-def test_degraded_clean_scan_is_allowed_but_shown_to_the_user(tmp_path, case):
+def test_degraded_clean_scan_is_allowed_but_shown_to_the_user(entry, case, monkeypatch, tmp_path):
     # Exit 0 stderr never reaches the user from a PreToolUse hook; a
     # systemMessage does. No permission decision, so the read goes ahead.
-    img, env = _stub_env(tmp_path, DEGRADED_CLEAN[case])
-    r = run(_read(img), env=env)
-    assert r.returncode == 0
-    out = json.loads(r.stdout)
-    assert "hookSpecificOutput" not in out
-    assert "incomplete" in out["systemMessage"]
-    assert ("tesseract not found" if case == "no-ocr" else "partial") in out["systemMessage"]
+    stub = _printing(tmp_path, DEGRADED_CLEAN[case])
+    code, out = run(entry, _read(_image(tmp_path)), monkeypatch, stub=stub)
+    assert code == 0
+    message = json.loads(out)
+    assert "hookSpecificOutput" not in message
+    assert "incomplete" in message["systemMessage"]
+    assert ("tesseract not found" if case == "no-ocr" else "partial") in message["systemMessage"]
 
 
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
 @pytest.mark.parametrize("case", sorted(DEGRADED_CLEAN))
-def test_degraded_clean_scan_asks_when_fail_closed(tmp_path, case):
-    img, env = _stub_env(tmp_path, DEGRADED_CLEAN[case], fail="closed")
-    r = run(_read(img), env=env)
-    assert r.returncode == 0
-    out = json.loads(r.stdout)["hookSpecificOutput"]
-    assert out["permissionDecision"] == "ask"
-    assert "incomplete" in out["permissionDecisionReason"]
+def test_degraded_clean_scan_asks_when_fail_closed(entry, case, monkeypatch, tmp_path):
+    stub = _printing(tmp_path, DEGRADED_CLEAN[case])
+    code, out = run(entry, _read(_image(tmp_path)), monkeypatch, stub=stub, fail="closed")
+    assert code == 0
+    decision = _decision(out)
+    assert decision["permissionDecision"] == "ask"
+    assert "incomplete" in decision["permissionDecisionReason"]
 
 
-def test_full_clean_scan_stays_silent(tmp_path):
-    img, env = _stub_env(
-        tmp_path, {"images": [{"verdict": "clean", "ocr_used": True, "notes": []}]}
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_full_clean_scan_stays_silent(entry, monkeypatch, tmp_path):
+    stub = _printing(tmp_path, {"images": [{"verdict": "clean", "ocr_used": True, "notes": []}]})
+    code, out = run(entry, _read(_image(tmp_path)), monkeypatch, stub=stub)
+    assert (code, out.strip()) == (0, "")
+
+
+CASES = {
+    "dangerous": ({"images": [{"verdict": "dangerous"}]}, None),
+    "suspicious": ({"images": [{"verdict": "suspicious"}]}, None),
+    "clean": ({"images": [{"verdict": "clean", "ocr_used": True, "notes": []}]}, None),
+    "no-ocr": (DEGRADED_CLEAN["no-ocr"], None),
+    "no-ocr-closed": (DEGRADED_CLEAN["no-ocr"], "closed"),
+    "partial": (DEGRADED_CLEAN["partial"], None),
+    "garbage": ("not json", None),
+    "garbage-closed": ("not json", "closed"),
+}
+
+
+@POSIX_ONLY
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_both_entry_points_print_the_same_thing(case, monkeypatch, tmp_path):
+    report, fail = CASES[case]
+    stub = _printing(tmp_path, report) if isinstance(report, dict) else _stub(tmp_path, f"print({report!r})")
+    img = _image(tmp_path)
+    sh = run("sh", _read(img), monkeypatch, stub=stub, fail=fail)
+    py = run("py", _read(img), monkeypatch, stub=stub, fail=fail)
+    assert sh == py
+
+
+# --- timeouts and a missing install -------------------------------------------
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_a_scan_that_times_out_runs_once(entry, monkeypatch, tmp_path):
+    # The guard used to re-run a scan that printed nothing via python3 -m
+    # framewall, so a timed-out scan cost two full timeouts. Every way it
+    # could run framewall is stubbed to log and hang; only one may run. The
+    # limit is cut to 1 s so the test doesn't wait out the real one.
+    if entry == "sh" and shutil.which("timeout") is None:
+        pytest.skip("no timeout(1) to cut the scan off")
+    log = tmp_path / "calls.log"
+    stub = _stub(tmp_path, f"open({str(log)!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\ntime.sleep(10)")
+    pkg = tmp_path / "cwd" / "framewall"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "__main__.py").write_text(
+        f"import sys, time\nopen({str(log)!r}, 'a').write('module ' + ' '.join(sys.argv[1:]) + '\\n')\ntime.sleep(10)\n"
     )
-    r = run(_read(img), env=env)
-    assert r.returncode == 0
-    assert r.stdout.strip() == ""
+    if entry == "sh":
+        shim = stub.parent / "timeout"
+        shim.write_text(f'#!/usr/bin/env bash\nshift\nexec "{shutil.which("timeout")}" 1 "$@"\n')
+        shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(guard, "GUARD_SECONDS", 1)
+    _code, out = run(entry, _read(_image(tmp_path)), monkeypatch, stub=stub, cwd=pkg.parent)
+    calls = log.read_text().splitlines()
+    assert len(calls) == 1, calls
+    args = calls[0].split()
+    limit = float(args[args.index("--max-scan-seconds") + 1])
+    assert 0 < limit < 30
+    decision = _decision(out)
+    assert decision["permissionDecision"] == "ask"
+    assert "did not finish" in decision["permissionDecisionReason"]
 
 
-def test_missing_framewall_is_shown_to_the_user(tmp_path):
+@POSIX_ONLY
+def test_missing_framewall_is_shown_to_the_user(tmp_path, monkeypatch):
     # A PATH holding only what the guard needs to get that far, and a
     # framewall package that fails to import, so the real install (if any)
     # can't be found.
@@ -186,48 +280,24 @@ def test_missing_framewall_is_shown_to_the_user(tmp_path):
     shadow = tmp_path / "shadow" / "framewall"
     shadow.mkdir(parents=True)
     (shadow / "__init__.py").write_text("raise ImportError('not installed')\n")
-    img = tmp_path / "shot.png"
-    img.write_bytes(b"not really a png")
     env = dict(os.environ, PATH=str(bindir), PYTHONPATH=str(shadow.parent))
-    r = run(_read(img), env=env, cwd=tmp_path)
-    assert r.returncode == 0
-    out = json.loads(r.stdout)
-    assert "hookSpecificOutput" not in out
-    assert "not installed" in out["systemMessage"]
-
-
-@pytest.mark.skipif(shutil.which("timeout") is None, reason="no timeout(1) to cut the scan off")
-def test_a_scan_that_times_out_runs_once(tmp_path):
-    # The guard used to re-run a scan that printed nothing via python3 -m
-    # framewall, so a timed-out scan cost two full timeouts. Both entry points
-    # are stubbed to log and hang; only one may run. timeout(1) is shimmed
-    # down to 1 s so the test doesn't wait out the real limit.
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    log = tmp_path / "calls.log"
-    hang = f'echo "$0 $*" >> "{log}"\nsleep 10\n'
-    stub = bindir / "framewall"
-    stub.write_text(f"#!/usr/bin/env bash\n{hang}")
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-    shim = bindir / "timeout"
-    shim.write_text(f'#!/usr/bin/env bash\nshift\nexec "{shutil.which("timeout")}" 1 "$@"\n')
-    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
-    pkg = tmp_path / "cwd" / "framewall"
-    pkg.mkdir(parents=True)
-    (pkg / "__init__.py").write_text("")
-    (pkg / "__main__.py").write_text(
-        f"import sys, time\nopen({str(log)!r}, 'a').write('module ' + ' '.join(sys.argv[1:]) + '\\n')\ntime.sleep(10)\n"
+    r = subprocess.run(
+        [str(HOOK)], input=json.dumps(_read(_image(tmp_path))), capture_output=True,
+        text=True, env=env, cwd=tmp_path,
     )
-    img = tmp_path / "shot.png"
-    img.write_bytes(b"not really a png")
-    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}")
+    assert r.returncode == 0
+    message = json.loads(r.stdout)
+    assert "hookSpecificOutput" not in message
+    assert "not installed" in message["systemMessage"]
+
+
+def test_framewall_guard_runs_from_the_cli(monkeypatch, tmp_path):
+    # The subcommand end to end in a child process, the way Claude Code runs it.
+    env = dict(os.environ, PYTHONPATH=str(REPO))
     env.pop("FRAMEWALL_GUARD_FAIL", None)
-    r = run(_read(img), env=env, cwd=pkg.parent)
-    calls = log.read_text().splitlines()
-    assert len(calls) == 1, calls
-    args = calls[0].split()
-    limit = float(args[args.index("--max-scan-seconds") + 1])
-    assert 0 < limit < 30
-    out = json.loads(r.stdout)["hookSpecificOutput"]
-    assert out["permissionDecision"] == "ask"
-    assert "did not finish" in out["permissionDecisionReason"]
+    r = subprocess.run(
+        [sys.executable, "-m", "framewall", "guard"], input=json.dumps(_read(POISONED)),
+        capture_output=True, text=True, env=env, cwd=tmp_path,
+    )
+    assert r.returncode == 0, r.stderr
+    assert _decision(r.stdout)["permissionDecision"] == "deny"

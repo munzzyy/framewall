@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# framewall PreToolUse guard for Claude Code.
+# framewall PreToolUse guard for Claude Code. `framewall guard` does the same
+# from any install; this script is for setups that already point at it.
 #
 # Registered on the Read tool, this scans an image before the agent reads it
 # and blocks the read when framewall thinks the picture is carrying an
@@ -83,7 +84,8 @@ fi
 # Keep the scan's own stderr so a failure can be reported instead of swallowed.
 scan_err="$(mktemp)"
 # $scanner is unquoted on purpose: "python3 -m framewall" is three words.
-out="$(run_scan $scanner scan "$file" --json --max-scan-seconds "$scan_seconds" 2>"$scan_err")"
+# shellcheck disable=SC2086
+out="$(run_scan $scanner scan --json --max-scan-seconds "$scan_seconds" -- "$file" 2>"$scan_err")"
 scan_status=$?
 reason_note="$(tr '\n' ' ' <"$scan_err" | cut -c1-300)"
 rm -f "$scan_err"

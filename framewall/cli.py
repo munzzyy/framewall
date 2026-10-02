@@ -77,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="tesseract language(s) to probe, e.g. eng or eng+deu "
         "(default: the FRAMEWALL_TESSERACT_LANG env var, else tesseract's own default, eng)",
     )
+    sub.add_parser(
+        "guard",
+        help="Claude Code PreToolUse hook: read the hook JSON on stdin, block or ask "
+        "on a risky image",
+    )
     return p
 
 
@@ -137,6 +142,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return _run_doctor(args)
+    if args.command == "guard":
+        from .guard import main as guard_main
+
+        return guard_main()
     if args.command != "scan":
         return 2
     if args.require_ocr and args.no_ocr:
