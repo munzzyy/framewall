@@ -3,6 +3,7 @@ that hold a screenshot in memory instead of on disk."""
 
 from __future__ import annotations
 
+import array
 import io
 from pathlib import Path
 
@@ -55,6 +56,21 @@ def test_scan_bytes_holds_the_file_size_cap(monkeypatch):
     monkeypatch.setattr(imageio, "MAX_FILE_BYTES", 100)
     result = framewall.scan_bytes(_png_bytes(clean_screenshot()), use_ocr=False)
     assert "exceeds" in result.error
+
+
+def test_scan_bytes_counts_a_memoryview_in_bytes_not_items(monkeypatch):
+    data = _png_bytes(clean_screenshot())
+    data += b"\0" * (-len(data) % 8)
+    monkeypatch.setattr(imageio, "MAX_FILE_BYTES", len(data) - 1)
+    wide = memoryview(array.array("Q", data))
+    assert len(wide) * 8 == len(data)
+    assert "exceeds" in framewall.scan_bytes(wide, use_ocr=False).error
+
+
+def test_scan_bytes_reads_a_strided_memoryview_without_crashing():
+    data = _png_bytes(clean_screenshot())
+    assert framewall.scan_bytes(memoryview(data)[::1], use_ocr=False).verdict == "clean"
+    assert "not a readable image" in framewall.scan_bytes(memoryview(data)[::2], use_ocr=False).error
 
 
 def test_scan_bytes_holds_the_pixel_cap(monkeypatch):

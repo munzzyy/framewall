@@ -70,10 +70,10 @@ def _open_checked(source, name=None) -> Image.Image:
     Pillow image (still in its original mode, possibly multi-frame). `name`
     labels bytes in error messages. Raises ImageError on anything it refuses
     to scan."""
-    if isinstance(source, (bytes, bytearray, memoryview)):
+    in_memory = isinstance(source, (bytes, bytearray, memoryview))
+    if in_memory:
         label = name or "<bytes>"
-        size = len(source)
-        fp = io.BytesIO(source)
+        size = memoryview(source).nbytes  # len() counts items, not bytes
     else:
         fp = label = Path(source)
         try:
@@ -85,6 +85,8 @@ def _open_checked(source, name=None) -> Image.Image:
             f"{label}: {size / 1_048_576:.1f} MB exceeds the "
             f"{MAX_FILE_BYTES / 1_048_576:.0f} MB cap"
         )
+    if in_memory:
+        fp = io.BytesIO(source if isinstance(source, bytes) else memoryview(source).tobytes())
 
     try:
         img = Image.open(fp, formats=FORMATS)

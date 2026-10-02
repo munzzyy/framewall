@@ -246,7 +246,11 @@ def render_sarif(results) -> str:
 def _sarif_uri(path) -> str:
     """Relative to the working directory when the file sits under it, which
     is how code scanning maps a result to a file in the repo. Otherwise a
-    file:// URI, since a bare absolute path (or a Windows one) isn't one."""
+    file:// URI, since a bare absolute path (or a Windows one) isn't one.
+    An image that came in on stdin or as bytes has no file; its label loses
+    the angle brackets, which a URI can't hold."""
+    if path in ("<stdin>", "<bytes>"):
+        return path[1:-1]
     p = Path(path)
     if not p.is_absolute():
         return p.as_posix()

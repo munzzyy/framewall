@@ -293,3 +293,9 @@ def test_sarif_uri_is_relative_under_the_working_directory(tmp_path, monkeypatch
     doc = json.loads(render_sarif([_dangerous_result(str(inside)), _error_result(str(outside))]))
     uris = [r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] for r in doc["runs"][0]["results"]]
     assert uris == ["shots/a.png", outside.as_uri()]
+
+
+def test_sarif_uri_for_an_image_with_no_file_is_a_plain_word():
+    doc = json.loads(render_sarif([_dangerous_result("<stdin>"), _error_result("<bytes>")]))
+    uris = [r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] for r in doc["runs"][0]["results"]]
+    assert uris == ["stdin", "bytes"]
