@@ -165,7 +165,9 @@ detector that failed to run. Fix it with `apt install tesseract-ocr-eng`
 (or the equivalent language pack) and re-scan. The probe tests the language
 the scan will actually use: pick one with `--lang deu` (or
 `FRAMEWALL_TESSERACT_LANG=deu` for the hook), and if that pack is missing
-the skip reason names it.
+the skip reason names it. The injection patterns in FW-001 and FW-005 are
+English only, though: `--lang` gets a German screenshot read, but a payload
+written in German won't match anything.
 
 Run `framewall doctor` on a new machine to check this before it costs you a
 scan: it prints the tesseract binary path, its version, the language packs
@@ -347,10 +349,6 @@ neither can silently regress. Per-technique history and caveats:
   document that's itself teaching prompt-injection concepts. A clean scan
   means nothing obvious tripped, not that the image is safe to feed an
   agent unsupervised.
-- **The injection patterns are English only.** `--lang` lets tesseract read
-  German, French or any other installed language, but FW-001 and FW-005
-  match English phrasing, so a payload written in another language is read
-  and then not matched.
 - **Tiny text needs to survive an upscale to be read exactly.** Below
   roughly 8-9px, tesseract stops recognizing text at native size. framewall
   flags thin, text-shaped strips anyway and re-reads them upscaled with a
@@ -425,6 +423,33 @@ injection-fixtures catch rate above, re-asserted in CI so it can't quietly
 slide back. `tests/_images.py`
 is the fixture factory both the tests and `examples/generate.py` share the
 approach with (not the code - `examples/` is deliberately standalone).
+
+## Roadmap
+
+What is left needs someone other than this repo's code: a release, a
+decision, an outside reviewer or a native speaker.
+
+- A tagged 0.2.0 release and a PyPI package. The only tag, v0.1.0, predates
+  the OCR time budget, `framewall doctor`, `framewall guard` and every fix in
+  [CHANGELOG.md](CHANGELOG.md), and the PyPI name isn't claimed yet. Until
+  then, install from the repo as [Install](#install) shows and pin a commit
+  in CI.
+- A decision on FW-001's broadest phrasing. "You are now ...", "New task:
+  ..." and a `System:` label catch real payloads, and they also match
+  ordinary copy like "System: Online" or "New task: Review PR #42", which
+  comes back DANGEROUS and blocks the read. They can be tightened, dropped
+  to medium so the hook asks instead, or kept and documented the way
+  [What it does not do](#what-it-does-not-do) has them now.
+- An independent review of the paths that decide a verdict: OCR failures,
+  partial scans, the guard's fallbacks and the image decoders. 0.2.0 fixed
+  several bugs there that let a crafted image come back CLEAN or crash the
+  scan. Fresh eyes are how the next ones get found;
+  [SECURITY.md](SECURITY.md) says how to report one.
+- Injection patterns for languages other than English, written or reviewed
+  by native speakers. `--lang` already reads them; nothing matches them yet.
+- A look at real macOS screenshots. FW-005's list of routine metadata was
+  built from ImageMagick output and a hand-made macOS-style XMP packet, not
+  a screenshot taken on a Mac.
 
 ## Contributing
 
