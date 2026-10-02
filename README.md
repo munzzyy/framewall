@@ -125,6 +125,10 @@ framewall scan screenshot.png --lang eng+deu # tesseract language(s); FRAMEWALL_
 framewall scan huge.png --max-scan-seconds 60  # whole-image time ceiling (default 30; 0 lifts it)
 ```
 
+framewall reads PNG, JPEG, GIF, BMP, TIFF and WebP. A file in any other
+format is an error (exit 2) even when its name ends in `.png`, so a crafted
+file can't steer the scan into one of Pillow's other decoders.
+
 Every OCR pass for one image draws on a single wall-clock budget
 (`--max-scan-seconds`, default 30), and the number of flagged regions that
 get their own OCR pass is capped. Without those bounds, one busy or crafted

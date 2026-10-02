@@ -6,10 +6,10 @@ Not tagged yet. Installing from main gets this version.
 
 ### Added
 
-- FW-006 flags high-frequency two-tone camouflage, a checkerboard or stripe
+- FW-006 flags high-frequency two-tone camouflage: a checkerboard or stripe
   field that text is stamped into so OCR cannot binarize it.
-- Two recovery passes run when nothing else matched: one reads text a shade
-  off its background, the other re-reads off-axis text counter-rotated. Thin
+- Two recovery passes run when nothing else matched. One reads text a shade
+  off its background and the other re-reads off-axis text counter-rotated. Thin
   strips too small for plain OCR are read again upscaled. With FW-006 that is
   7 of the 8 [injection-fixtures](https://github.com/munzzyy/injection-fixtures)
   0.1.0 techniques caught. framewall 0.1.0 catches 3 of 8 on the same corpus.
@@ -17,18 +17,18 @@ Not tagged yet. Installing from main gets this version.
   `--max-scan-seconds`. Each image gets one time budget for all its OCR passes
   and frames. Flagged regions are merged and capped. Anything cut short shows
   up as a note saying the scan is partial.
-- `framewall guard`, the Claude Code hook as a subcommand. It works from any
-  install, Windows included, and behaves like `hooks/framewall-guard.sh`.
+- `framewall guard` is the Claude Code hook as a subcommand. It works from
+  any install (Windows included) and behaves like `hooks/framewall-guard.sh`.
 - `framewall doctor` checks whether tesseract can read text in the language
   a scan would use. When it cannot, it names the package to install.
 - `--require-ocr` exits 2 when any image was scanned without OCR or only in
-  part, so CI cannot stay green with the core detector off.
+  part. CI cannot stay green with the core detector off.
 - SARIF output lists images scanned without OCR or only in part under
-  `toolExecutionNotifications`, and `--quiet` marks them `(no OCR)` or
+  `toolExecutionNotifications`. `--quiet` marks them `(no OCR)` or
   `(partial)`.
-- `framewall scan -` reads one image from stdin, and `framewall.scan_bytes`
-  scans one held in memory, for agent loops that never write their
-  screenshots to disk. Both go through the same caps and checks as a file.
+- `framewall scan -` reads one image from stdin and `framewall.scan_bytes`
+  scans one held in memory. Agent loops that never write their screenshots to
+  disk can use either. Both go through the same caps and checks as a file.
   The README documents the Python API.
 
 ### Changed
@@ -37,8 +37,8 @@ Not tagged yet. Installing from main gets this version.
 - A clean result says what it rules out ("No text-shaped injection found")
   instead of reading as "safe".
 - The Claude Code hook tells you when it allows a read whose scan skipped OCR
-  or stopped early, and asks instead under `FRAMEWALL_GUARD_FAIL=closed`. It
-  runs the scan once, with framewall's own budget inside its timeout.
+  or stopped early. It asks instead under `FRAMEWALL_GUARD_FAIL=closed`. It
+  runs the scan once with framewall's own budget inside its timeout.
 - ImageMagick's date stamps, PNG's "Creation Time" and an XMP packet no
   longer make an image SUSPICIOUS on their own. They are still checked for
   injection text.
@@ -56,6 +56,9 @@ Not tagged yet. Installing from main gets this version.
 - Hostile PNG metadata can no longer make the scan error out.
 - Finding titles, details and `--quiet` paths are escaped the same way
   snippets are. A crafted key or file name cannot add lines to the report.
+- Files are decoded only as one of the formats SECURITY.md lists. A file in
+  any other format is refused whatever it is named. It no longer goes to
+  whichever of Pillow's decoders matches its bytes.
 
 ## 0.1.0 - 2026-07-28
 

@@ -134,3 +134,66 @@ def test_load_does_not_flag_a_file_within_the_frame_cap(tmp_path, monkeypatch):
     frames[0].save(p, save_all=True, append_images=frames[1:])
     monkeypatch.setattr(imageio, "MAX_FRAMES", 4)
     assert not imageio.load(p).truncated
+
+
+EPS = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nshowpage\n"
+
+
+def test_an_eps_file_named_png_never_reaches_ghostscript(tmp_path, monkeypatch):
+    # Pillow picks a decoder from the bytes, not the name, and its EPS decoder
+    # runs the system Ghostscript on whatever PostScript the file carries.
+    from PIL import EpsImagePlugin
+
+    def ghostscript(*args, **kwargs):
+        raise AssertionError("ghostscript invoked")
+
+    monkeypatch.setattr(EpsImagePlugin, "has_ghostscript", lambda: True)
+    monkeypatch.setattr(EpsImagePlugin, "Ghostscript", ghostscript)
+    p = tmp_path / "notreally.png"
+    p.write_bytes(EPS)
+    with pytest.raises(imageio.ImageError):
+        imageio.load(p)
+    with pytest.raises(imageio.ImageError):
+        imageio.load(EPS)
+
+
+@pytest.mark.parametrize("fmt", ["PPM", "PCX", "TGA", "ICO"])
+def test_formats_outside_the_list_are_refused_whatever_the_name(tmp_path, fmt):
+    p = tmp_path / "screenshot.png"
+    Image.new("RGB", (32, 32), "white").save(p, fmt)
+    with pytest.raises(imageio.ImageError, match="not a readable image"):
+        imageio.load(p)
+
+
+def _webp_ok():
+    from PIL import features
+
+    return features.check("webp")
+
+
+@pytest.mark.parametrize("fmt,ext", [
+    ("PNG", "png"), ("JPEG", "jpg"), ("GIF", "gif"), ("BMP", "bmp"),
+    ("TIFF", "tif"), pytest.param("WEBP", "webp", marks=pytest.mark.skipif(
+        not _webp_ok(), reason="this Pillow was built without WebP")),
+])
+def test_every_listed_format_still_loads(tmp_path, fmt, ext):
+    p = tmp_path / f"shot.{ext}"
+    clean_screenshot().save(p, fmt)
+    frames = imageio.load(p).frames
+    assert len(frames) == 1
+    assert frames[0][1].size == (1000, 700)
+
+
+def test_an_mpo_still_loads_through_the_jpeg_decoder(tmp_path):
+    p = tmp_path / "pair.jpg"
+    first = Image.new("RGB", (40, 30), "white")
+    first.save(p, "MPO", save_all=True, append_images=[Image.new("RGB", (40, 30), "black")])
+    assert Image.open(p).format == "MPO"
+    assert len(imageio.load(p).frames) == 2
+
+
+def test_a_multi_page_tiff_loads_every_page(tmp_path):
+    p = tmp_path / "pages.tiff"
+    pages = [Image.new("RGB", (30, 30), c) for c in ("white", "black", "gray")]
+    pages[0].save(p, save_all=True, append_images=pages[1:])
+    assert [i for i, _ in imageio.load(p).frames] == [0, 1, 2]

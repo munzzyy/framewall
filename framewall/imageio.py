@@ -16,6 +16,10 @@ MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB on disk
 MAX_PIXELS = 40_000_000  # ~40 megapixels decoded (e.g. 8000x5000)
 MAX_FRAMES = 32  # animated GIF / multi-page TIFF frames scanned before stopping
 
+# The only decoders Pillow may pick, whatever the file is named. MPO is
+# reached through JPEG's opener; naming it here makes Pillow raise KeyError.
+FORMATS = ("PNG", "JPEG", "GIF", "BMP", "DIB", "TIFF", "WEBP")
+
 
 class ImageError(Exception):
     """Raised for any input image framewall refuses to scan."""
@@ -83,7 +87,7 @@ def _open_checked(source, name=None) -> Image.Image:
         )
 
     try:
-        img = Image.open(fp)
+        img = Image.open(fp, formats=FORMATS)
         width, height = img.size
         pixels = width * height
         if pixels > MAX_PIXELS:
