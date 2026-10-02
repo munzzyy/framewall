@@ -25,6 +25,13 @@ set -uo pipefail
 
 input="$(cat)"
 
+# Every python3 call below puts its working directory first on sys.path, and
+# the hook inherits the agent's project as cwd. A repo carrying a json.py or
+# its own framewall/ must not get to run here, so work from $HOME and keep
+# the original directory only to resolve a relative image path.
+orig_dir="$PWD"
+cd "$HOME" 2>/dev/null || cd /
+
 # The path the Read tool is about to open.
 file="$(printf '%s' "$input" | python3 -c 'import json,sys
 try:
@@ -41,6 +48,7 @@ case "$(printf '%s' "$file" | tr '[:upper:]' '[:lower:]')" in
   *) exit 0 ;;
 esac
 
+case "$file" in ""|/*) ;; *) file="$orig_dir/$file" ;; esac
 [ -f "$file" ] || exit 0   # let Read report a missing file itself
 
 emit() {  # $1 = deny|ask, $2 = reason

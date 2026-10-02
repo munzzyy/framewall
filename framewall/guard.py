@@ -31,6 +31,13 @@ def _scan_command(path: str, seconds: int) -> list:
             "--max-scan-seconds", str(seconds), "--", path]
 
 
+def _scan_cwd() -> str:
+    # -m puts the working directory first on sys.path. The hook inherits the
+    # agent's project as cwd, so a repo carrying its own framewall/ or json.py
+    # would run on every image read. Run from the installed package's parent.
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def _requested_path(raw: str) -> str:
     try:
         path = (json.loads(raw).get("tool_input") or {}).get("file_path", "")
@@ -115,9 +122,9 @@ def main(stdin=None, stdout=None) -> int:
 
     try:
         proc = subprocess.run(
-            _scan_command(path, SCAN_SECONDS),
+            _scan_command(os.path.abspath(path), SCAN_SECONDS),
             capture_output=True, text=True, errors="replace",
-            timeout=GUARD_SECONDS, check=False,
+            timeout=GUARD_SECONDS, check=False, cwd=_scan_cwd(),
         )
         out, err, timed_out = proc.stdout, proc.stderr, False
     except subprocess.TimeoutExpired:

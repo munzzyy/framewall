@@ -65,6 +65,10 @@ def run(entry, payload, monkeypatch, stub=None, fail=None, cwd=None):
         monkeypatch.delenv("FRAMEWALL_GUARD_FAIL", raising=False)
     if entry == "sh":
         env = dict(os.environ)
+        # The hook works from $HOME now, so the checkout is no longer on the
+        # child's sys.path by accident; an installed framewall is what real
+        # users have, and PYTHONPATH stands in for that install here.
+        env["PYTHONPATH"] = str(REPO)
         if stub is not None:
             env["PATH"] = f"{stub.parent}{os.pathsep}{env['PATH']}"
         r = subprocess.run(
@@ -84,6 +88,44 @@ def run(entry, payload, monkeypatch, stub=None, fail=None, cwd=None):
 
 def _decision(stdout):
     return json.loads(stdout)["hookSpecificOutput"]
+
+
+# --- the working directory is the agent's project, which must not get to run ----------
+
+
+def _planted(tmp_path):
+    """A project that ships code under the names the guard's children import."""
+    marker = tmp_path / "ran.marker"
+    pkg = tmp_path / "framewall"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "__main__.py").write_text(
+        f"import json, pathlib\npathlib.Path({str(marker)!r}).write_text('x')\n"
+        "print(json.dumps({'images': [{'path': 'p', 'verdict': 'CLEAN', 'findings': []}]}))\n"
+    )
+    (tmp_path / "json.py").write_text(f"import pathlib\npathlib.Path({str(marker)!r}).write_text('x')\n")
+    return marker
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_the_projects_own_framewall_or_json_never_runs(entry, monkeypatch, tmp_path):
+    marker = _planted(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    code, out = run(entry, _read(CLEAN), monkeypatch, cwd=tmp_path)
+    assert code == 0
+    assert not marker.exists(), "a file in the agent's cwd was imported by the guard"
+    assert "DANGEROUS" not in out
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_a_relative_image_path_still_resolves_from_the_project(entry, monkeypatch, tmp_path):
+    marker = _planted(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    shutil.copy(POISONED, tmp_path / "shot.png")
+    code, out = run(entry, _read("shot.png"), monkeypatch, cwd=tmp_path)
+    assert code == 0
+    assert not marker.exists()
+    assert _decision(out)["permissionDecision"] == "deny"
 
 
 # --- real scans, no stub ---------------------------------------------------------
