@@ -9,7 +9,7 @@ import array
 import math
 from dataclasses import dataclass
 
-from PIL import ImageChops, ImageStat
+from PIL import Image, ImageChops, ImageStat
 
 
 def block_grid(width: int, height: int, block: int):
@@ -26,14 +26,14 @@ def block_box(col: int, row: int, block: int, width: int, height: int):
     return left, top, right, bottom
 
 
-def group_flagged(flagged, cols: int, rows: int, block: int, width: int, height: int):
+def group_cells(flagged, cols: int, rows: int):
     """4-connected flood fill over a cols x rows boolean grid (flagged[row][col]).
 
-    Returns a list of (left, top, w, h, n_blocks) pixel bounding boxes, one
-    per connected group of flagged blocks.
+    Returns one list of (row, col) cells per connected group of flagged
+    blocks, in row-major order of each group's first cell.
     """
     seen = [[False] * cols for _ in range(rows)]
-    regions = []
+    groups = []
     for r0 in range(rows):
         for c0 in range(cols):
             if not flagged[r0][c0] or seen[r0][c0]:
@@ -54,12 +54,27 @@ def group_flagged(flagged, cols: int, rows: int, block: int, width: int, height:
                     ):
                         seen[nr][nc] = True
                         stack.append((nr, nc))
-            rows_hit = [cell[0] for cell in cells]
-            cols_hit = [cell[1] for cell in cells]
-            left, top, _, _ = block_box(min(cols_hit), min(rows_hit), block, width, height)
-            _, _, right, bottom = block_box(max(cols_hit), max(rows_hit), block, width, height)
-            regions.append((left, top, right - left, bottom - top, len(cells)))
-    return regions
+            groups.append(cells)
+    return groups
+
+
+def cells_box(cells, block: int, width: int, height: int):
+    """Pixel bounding box (left, top, w, h) of a group of (row, col) cells."""
+    rows_hit = [cell[0] for cell in cells]
+    cols_hit = [cell[1] for cell in cells]
+    left, top, _, _ = block_box(min(cols_hit), min(rows_hit), block, width, height)
+    _, _, right, bottom = block_box(max(cols_hit), max(rows_hit), block, width, height)
+    return left, top, right - left, bottom - top
+
+
+def group_flagged(flagged, cols: int, rows: int, block: int, width: int, height: int):
+    """Returns a list of (left, top, w, h, n_blocks) pixel bounding boxes, one
+    per 4-connected group of flagged blocks (see group_cells).
+    """
+    return [
+        (*cells_box(cells, block, width, height), len(cells))
+        for cells in group_cells(flagged, cols, rows)
+    ]
 
 
 @dataclass
@@ -130,6 +145,50 @@ def block_stats(gray_image, block: int, extrema: bool = False) -> BlockStats:
         if extrema:
             lo[i], hi[i] = crop.getextrema()
     return BlockStats(cols, rows, count, total, total_sq, lo, hi)
+
+
+def axis_detail(gray_image, block: int):
+    """Per-block (across, down) flags, row-major over the block grid: nonzero
+    when some pixel differs from its right-hand neighbour, or from the one
+    below it, counting only pairs inside one block. A horizontal edge or rule
+    has no detail across, a vertical one none down."""
+    return (
+        _any_per_block(_inner_changes(gray_image, block, across=True), block),
+        _any_per_block(_inner_changes(gray_image, block, across=False), block),
+    )
+
+
+def _inner_changes(gray_image, block: int, across: bool):
+    """255 where a pixel differs from the next one along the axis, 0 where it
+    doesn't or where the next pixel is in another block or past the edge."""
+    width, height = gray_image.size
+    dx, dy = (1, 0) if across else (0, 1)
+    nxt = gray_image.crop((dx, dy, width + dx, height + dy))
+    changed = ImageChops.difference(gray_image, nxt).point([0] + [255] * 255)
+    length = width if across else height
+    keep = bytes(0 if (i % block == block - 1 or i == length - 1) else 255 for i in range(length))
+    line = (width, 1) if across else (1, height)
+    mask = Image.frombytes("L", line, keep).resize((width, height), Image.NEAREST)
+    return ImageChops.darker(changed, mask)
+
+
+def _any_per_block(changes, block: int) -> bytearray:
+    """Nonzero per block where `changes` has any 255. reduce() rounds the
+    block's mean, and one 255 in 64 pixels still rounds to 4."""
+    width, height = changes.size
+    cols, rows = block_grid(width, height, block)
+    full_cols, full_rows = width // block, height // block
+    out = bytearray(cols * rows)
+    if full_cols and full_rows:
+        whole = changes.crop((0, 0, full_cols * block, full_rows * block))
+        means = whole.reduce(block).tobytes()
+        for r in range(full_rows):
+            out[r * cols:r * cols + full_cols] = means[r * full_cols:(r + 1) * full_cols]
+    edge = [(c, r) for r in range(rows) for c in range(full_cols, cols)]
+    edge += [(c, r) for r in range(full_rows, rows) for c in range(full_cols)]
+    for c, r in edge:
+        out[r * cols + c] = changes.crop(block_box(c, r, block, width, height)).getextrema()[1]
+    return out
 
 
 def _block_sums(whole, block: int, table) -> array.array:

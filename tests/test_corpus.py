@@ -36,11 +36,18 @@ def _save(tmp_path, name, image):
     return p
 
 
-def test_benign_fixture_is_clean_without_ocr(tmp_path):
-    p = _save(tmp_path, "clean", _images.clean_screenshot())
-    result = scan_image(p, use_ocr=False)
-    assert result.error == ""
-    assert result.verdict == Verdict.CLEAN.value, [f.title for f in result.findings]
+BENIGN_FIXTURES = {
+    "clean_screenshot": _images.clean_screenshot,
+    "dark_mode_button": _images.dark_mode_button,
+}
+
+
+def test_benign_fixtures_are_clean_without_ocr(tmp_path):
+    for name, builder in BENIGN_FIXTURES.items():
+        p = _save(tmp_path, name, builder())
+        result = scan_image(p, use_ocr=False)
+        assert result.error == ""
+        assert result.verdict == Verdict.CLEAN.value, (name, [f.title for f in result.findings])
 
 
 def test_low_contrast_injection_is_flagged_without_ocr(tmp_path):
@@ -122,12 +129,13 @@ def test_benign_fixture_stays_clean_across_repeated_scans(tmp_path):
 
 
 @requires_tesseract
-def test_benign_fixture_is_clean_with_ocr(tmp_path):
-    p = _save(tmp_path, "clean", _images.clean_screenshot())
-    result = scan_image(p, use_ocr=True)
-    assert result.verdict == Verdict.CLEAN.value, [
-        (f.rule_id, f.title, f.snippet) for f in result.findings
-    ]
+def test_benign_fixtures_are_clean_with_ocr(tmp_path):
+    for name, builder in BENIGN_FIXTURES.items():
+        p = _save(tmp_path, name, builder())
+        result = scan_image(p, use_ocr=True)
+        assert result.verdict == Verdict.CLEAN.value, (name, [
+            (f.rule_id, f.title, f.snippet) for f in result.findings
+        ])
 
 
 @requires_tesseract

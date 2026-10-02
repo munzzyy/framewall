@@ -192,6 +192,17 @@ def with_orientation(image: Image.Image, path, orientation: int):
     return path
 
 
+def dark_mode_button() -> Image.Image:
+    """A dark-theme button: a 1-px border a few shades off its fill and a
+    light label. The border's straight runs are low-contrast and structured,
+    and used to read as hidden text."""
+    img = Image.new("RGB", (600, 300), (27, 30, 38))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([40, 40, 300, 100], radius=12, outline=(48, 52, 64), fill=(30, 33, 42))
+    d.text((70, 58), "Copy link", fill=(230, 232, 240), font=_font(18))
+    return img
+
+
 def solid_color(width: int = 200, height: int = 200, color=(255, 255, 255)) -> Image.Image:
     return Image.new("RGB", (width, height), color)
 
@@ -215,6 +226,7 @@ def parity_set():
         "tiny-corner": tiny_corner_injection(),
         "camouflage": edge_camouflage(),
         "sideways": sideways_injection(),
+        "dark-button": dark_mode_button(),
         "solid": solid_color(),
     }
     examples = Path(__file__).resolve().parent.parent / "examples"

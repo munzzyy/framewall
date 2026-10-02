@@ -43,6 +43,10 @@ Not tagged yet. Installing from main gets this version.
   longer make an image SUSPICIOUS on their own. They are still checked for
   injection text.
 - FW-002 and FW-004 are much faster on large images.
+- FW-002 no longer flags straight borders, dividers and panel seams. A
+  region needs a run of blocks that change both across and down, the way
+  text does. On a set of real app screenshots that cut its regions by about
+  a fifth.
 - SARIF file locations are relative to the working directory.
 - The published catch rate is measured on injection-fixtures 0.2.0 and split
   by verdict: 11 of 14 techniques flagged, 7 of them DANGEROUS. CI pins that

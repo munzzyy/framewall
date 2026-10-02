@@ -63,3 +63,49 @@ def test_group_flagged_two_separate_regions():
     assert len(regions) == 2
     sizes = sorted(r[4] for r in regions)
     assert sizes == [1, 2]
+
+
+def _reference_axis_detail(gray, block):
+    width, height = gray.size
+    cols, rows = grid.block_grid(width, height, block)
+    across, down = [], []
+    for r in range(rows):
+        for c in range(cols):
+            crop = gray.crop(grid.block_box(c, r, block, width, height))
+            px = crop.load()
+            w, h = crop.size
+            across.append(any(px[x, y] != px[x + 1, y] for y in range(h) for x in range(w - 1)))
+            down.append(any(px[x, y] != px[x, y + 1] for y in range(h - 1) for x in range(w)))
+    return across, down
+
+
+def test_axis_detail_matches_a_per_block_reference():
+    from tests._images import parity_set
+
+    for name, gray in parity_set():
+        across, down = grid.axis_detail(gray, 8)
+        want_across, want_down = _reference_axis_detail(gray, 8)
+        assert [bool(v) for v in across] == want_across, name
+        assert [bool(v) for v in down] == want_down, name
+
+
+def test_axis_detail_sees_lines_on_one_axis_only():
+    from PIL import Image, ImageDraw
+
+    img = Image.new("L", (32, 32), 200)
+    ImageDraw.Draw(img).line([(0, 3), (31, 3)], fill=190)
+    ImageDraw.Draw(img).line([(19, 16), (19, 31)], fill=190)
+    across, down = grid.axis_detail(img, 8)
+    assert not any(across[0:4]) and all(down[0:4])
+    assert across[2 * 4 + 2] and not down[2 * 4 + 2]
+
+
+def test_group_cells_and_cells_box_agree_with_group_flagged():
+    flagged = [
+        [True, True, False, False],
+        [False, True, False, True],
+    ]
+    groups = grid.group_cells(flagged, 4, 2)
+    assert sorted(len(g) for g in groups) == [1, 3]
+    boxes = [(*grid.cells_box(g, 5, 20, 10), len(g)) for g in groups]
+    assert boxes == grid.group_flagged(flagged, 4, 2, 5, 20, 10)

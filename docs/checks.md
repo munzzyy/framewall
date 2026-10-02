@@ -46,9 +46,15 @@ never reads the region doesn't get to block a read by itself.
 Pillow only, no OCR needed. Splits the image into small blocks and flags
 ones with real internal structure (some standard deviation - edges, strokes)
 but a narrow value range (a few shades of max-min) - the fingerprint of text
-rendered a few shades off its own background. A single-block-wide seam
-between two flat, similarly-colored UI panels is filtered out on purpose;
-real hidden text is at least a few characters wide.
+rendered a few shades off its own background.
+
+A region only counts when it holds a run of at least six blocks that change
+both across and down. Text does. A straight border, a divider or the seam
+between two flat panels changes along one axis only, so dark-mode outlines
+and horizontal rules are left alone in either direction. A rounded corner
+adds a few such blocks and a large radius can still trip it. The region also
+has to be three blocks wide, since real hidden text is at least a few
+characters wide.
 
 Contrast-boost the region or re-scan with OCR to see what it actually says.
 
