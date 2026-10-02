@@ -5,7 +5,6 @@ recovered text back need tesseract."""
 
 from __future__ import annotations
 
-import pytest
 
 from framewall import imageio, recover
 from framewall import ocr as ocr_mod
