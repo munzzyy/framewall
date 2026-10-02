@@ -6,12 +6,15 @@ import argparse
 import os
 import sys
 
-from . import __version__
+from . import __version__, imageio
+from .finding import ImageResult
 from .ocr import diagnose
 from .report import render_human, render_json, render_quiet, render_sarif
-from .scanner import DEFAULT_MAX_SCAN_SECONDS, scan_image
+from .scanner import DEFAULT_MAX_SCAN_SECONDS, scan_bytes, scan_image
 from .targets import resolve
 from .verdict import Verdict, rank
+
+STDIN_NAME = "<stdin>"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,7 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     scan = sub.add_parser("scan", help="scan one or more images")
-    scan.add_argument("targets", nargs="+", help="image file(s), a directory, or a glob")
+    scan.add_argument(
+        "targets", nargs="+", help="image file(s), a directory, a glob, or - for stdin"
+    )
     scan.add_argument(
         "--no-ocr", action="store_true", help="skip the tesseract OCR pass; run heuristics only"
     )
@@ -137,6 +142,14 @@ def _install_hint(lang) -> str:
     return f"apt install {apt}, pacman -S {pacman}, or brew install {brew}"
 
 
+def _scan_stdin(**options) -> ImageResult:
+    try:
+        data = imageio.read_capped(sys.stdin.buffer, STDIN_NAME)
+    except imageio.ImageError as e:
+        return ImageResult(path=STDIN_NAME, error=str(e))
+    return scan_bytes(data, name=STDIN_NAME, **options)
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -153,38 +166,37 @@ def main(argv=None) -> int:
 
     threshold = _fail_threshold(args.fail_on)
 
-    paths, unmatched = resolve(args.targets)
-    if not paths:
-        print(f"framewall: no images matched: {', '.join(unmatched) or ', '.join(args.targets)}", file=sys.stderr)
+    from_stdin = "-" in args.targets
+    targets = [t for t in args.targets if t != "-"]
+    paths, unmatched = resolve(targets) if targets else ([], [])
+    if not paths and not from_stdin:
+        print(f"framewall: no images matched: {', '.join(unmatched) or ', '.join(targets)}", file=sys.stderr)
         return 2
     for m in unmatched:
         print(f"framewall: warning: no match for {m}", file=sys.stderr)
+    if from_stdin and (sys.stdin is None or sys.stdin.isatty()):
+        print("framewall: - reads an image from stdin, but stdin is a terminal", file=sys.stderr)
+        return 2
 
     use_ocr = not args.no_ocr
     lang = args.lang or os.environ.get("FRAMEWALL_TESSERACT_LANG") or None
     max_seconds = args.max_scan_seconds
     if max_seconds is None:
         max_seconds = DEFAULT_MAX_SCAN_SECONDS
+    options = dict(use_ocr=use_ocr, ocr_timeout=args.timeout, max_seconds=max_seconds, lang=lang)
+    jobs = [(str(p), lambda p=p: scan_image(p, **options)) for p in paths]
+    if from_stdin:
+        jobs.insert(0, (STDIN_NAME, lambda: _scan_stdin(**options)))
     results = []
-    for p in paths:
+    for label, job in jobs:
         try:
-            results.append(
-                scan_image(
-                    p,
-                    use_ocr=use_ocr,
-                    ocr_timeout=args.timeout,
-                    max_seconds=max_seconds,
-                    lang=lang,
-                )
-            )
+            results.append(job())
         except Exception as e:
             # One hostile or malformed file must not abort a whole batch and
             # leave its siblings unscanned. Record the failure as an error
             # result (surfaced in every output format, non-zero exit) instead
             # of letting the traceback propagate.
-            from .finding import ImageResult
-
-            results.append(ImageResult(path=str(p), error=f"scan failed: {e}"))
+            results.append(ImageResult(path=label, error=f"scan failed: {e}"))
 
     color = not args.no_color and sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
     if args.json:

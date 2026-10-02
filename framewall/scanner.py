@@ -29,11 +29,27 @@ _STRIP_OCR_PAD = 3  # px of context around a tiny strip before it is OCR'd,
 
 def scan_image(path, use_ocr: bool = True, ocr_timeout=None,
                max_seconds=DEFAULT_MAX_SCAN_SECONDS, lang=None) -> ImageResult:
+    """Scan the image file at `path`. A file framewall can't or won't read
+    comes back with `error` set, not as an exception."""
     path = Path(path)
-    result = ImageResult(path=str(path))
+    return _scan(path, str(path), use_ocr, ocr_timeout, max_seconds, lang)
+
+
+def scan_bytes(data, name: str = "<bytes>", use_ocr: bool = True, ocr_timeout=None,
+               max_seconds=DEFAULT_MAX_SCAN_SECONDS, lang=None) -> ImageResult:
+    """Scan an image held in memory, such as a screenshot a computer-use loop
+    just took. Same caps, decoders and checks as scan_image; `name` is what
+    the result reports as its path."""
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        raise TypeError(f"scan_bytes wants bytes, not {type(data).__name__}")
+    return _scan(data, name, use_ocr, ocr_timeout, max_seconds, lang)
+
+
+def _scan(source, label, use_ocr, ocr_timeout, max_seconds, lang) -> ImageResult:
+    result = ImageResult(path=label)
 
     try:
-        frames, meta, truncated = imageio.load(path)
+        frames, meta, truncated = imageio.load(source, name=label)
     except imageio.ImageError as e:
         result.error = str(e)
         return result

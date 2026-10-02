@@ -309,3 +309,82 @@ def test_quiet_marks_a_degraded_scan(clean_png, monkeypatch, capsys, fields, lab
     _fake_scan(monkeypatch, **fields)
     cli.main(["scan", str(clean_png), "--quiet", "--fail-on", "none"])
     assert capsys.readouterr().out.startswith(label)
+
+
+class _Stdin:
+    def __init__(self, stream, tty=False):
+        self.buffer = stream
+        self._tty = tty
+
+    def isatty(self):
+        return self._tty
+
+
+EXAMPLES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples")
+
+
+def _example_bytes(name):
+    with open(os.path.join(EXAMPLES, name), "rb") as fh:
+        return fh.read()
+
+
+def test_dash_scans_an_image_piped_on_stdin(monkeypatch, capsys):
+    import io
+
+    monkeypatch.setattr("sys.stdin", _Stdin(io.BytesIO(_example_bytes("poisoned-screenshot.png"))))
+    code = cli.main(["scan", "-", "--no-ocr", "--quiet"])
+    assert code == 1
+    assert capsys.readouterr().out.strip() == "DANGEROUS (no OCR)  <stdin>"
+
+
+def test_dash_reads_a_real_pipe():
+    import subprocess
+    import sys
+
+    root = os.path.dirname(EXAMPLES)
+    env = dict(os.environ, PYTHONPATH=root)
+    proc = subprocess.run(
+        [sys.executable, "-m", "framewall", "scan", "-", "--no-ocr", "--quiet"],
+        input=_example_bytes("poisoned-screenshot.png"),
+        capture_output=True, env=env, cwd=root, timeout=120,
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert proc.stdout.decode().strip() == "DANGEROUS (no OCR)  <stdin>"
+
+
+def test_dash_and_files_scan_together_stdin_first(clean_png, monkeypatch, capsys):
+    import io
+
+    monkeypatch.setattr("sys.stdin", _Stdin(io.BytesIO(_example_bytes("clean-screenshot.png"))))
+    code = cli.main(["scan", str(clean_png), "-", "--json", "--no-ocr", "--fail-on", "none"])
+    assert code == 0
+    paths = [img["path"] for img in json.loads(capsys.readouterr().out)["images"]]
+    assert paths == ["<stdin>", str(clean_png.resolve())]
+
+
+def test_dash_over_the_size_cap_exits_two_without_reading_on(monkeypatch, capsys):
+    from framewall import imageio
+
+    class Endless:
+        consumed = 0
+
+        def read(self, n=-1):
+            assert n >= 0, "an unbounded read would never return"
+            chunk = min(n, 4096)
+            Endless.consumed += chunk
+            return b"\0" * chunk
+
+    monkeypatch.setattr(imageio, "MAX_FILE_BYTES", 50_000)
+    monkeypatch.setattr("sys.stdin", _Stdin(Endless()))
+    code = cli.main(["scan", "-", "--quiet", "--fail-on", "none"])
+    assert code == 2
+    assert capsys.readouterr().out.strip() == "ERROR  <stdin>"
+    assert Endless.consumed == 50_001
+
+
+def test_dash_on_a_terminal_is_a_usage_error(monkeypatch, capsys):
+    import io
+
+    monkeypatch.setattr("sys.stdin", _Stdin(io.BytesIO(b""), tty=True))
+    assert cli.main(["scan", "-"]) == 2
+    assert "stdin is a terminal" in capsys.readouterr().err

@@ -26,6 +26,10 @@ Not tagged yet. Installing from main gets this version.
 - SARIF output lists images scanned without OCR or only in part under
   `toolExecutionNotifications`, and `--quiet` marks them `(no OCR)` or
   `(partial)`.
+- `framewall scan -` reads one image from stdin, and `framewall.scan_bytes`
+  scans one held in memory, for agent loops that never write their
+  screenshots to disk. Both go through the same caps and checks as a file.
+  The README documents the Python API.
 
 ### Changed
 

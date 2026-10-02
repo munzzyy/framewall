@@ -119,6 +119,7 @@ framewall scan screenshot.png              # one image
 framewall scan ./screenshots                # every image in a directory, recursive
 framewall scan "./screenshots/*.png"         # a glob (quoted so it works on Windows too)
 framewall scan a.png b.png c.png             # multiple targets
+cat screenshot.png | framewall scan -        # one image piped on stdin
 framewall scan screenshot.png --no-ocr       # force heuristic-only, even if tesseract is installed
 framewall scan screenshot.png --lang eng+deu # tesseract language(s); FRAMEWALL_TESSERACT_LANG works too
 framewall scan huge.png --max-scan-seconds 60  # whole-image time ceiling (default 30; 0 lifts it)
@@ -287,6 +288,28 @@ wall you off from every screenshot.
   relative to the working directory when the image is under it.
 - `--quiet` - one verdict line per image (`DANGEROUS  path/to/file.png`), with
   `(no OCR)` or `(partial)` after the verdict when the scan was degraded
+
+### From Python
+
+A computer-use loop holds its screenshots as bytes, so there's no file to
+point the CLI at. Scan the bytes directly:
+
+```python
+import framewall
+
+result = framewall.scan_bytes(png_bytes)  # or framewall.scan_image("shot.png")
+if result.error or result.verdict != "clean" or result.partial:
+    ...  # don't hand this screenshot to the agent as is
+```
+
+`scan_bytes` goes through the same size caps, decoders and checks as a file
+on disk, and takes the same options: `use_ocr`, `lang`, `ocr_timeout` and
+`max_seconds`. It returns an `ImageResult`. `verdict` is `"clean"`,
+`"suspicious"` or `"dangerous"`, `findings` lists what tripped (each with
+`rule_id`, `severity`, `title`, `detail`, `region` and `snippet`), and
+`partial` is true when OCR didn't run or the scan was cut short. An image
+framewall can't or won't read comes back with `error` set instead of
+raising.
 
 ## What it checks
 

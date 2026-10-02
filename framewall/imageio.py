@@ -6,6 +6,7 @@ memory or hanging the OCR pass downstream.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import NamedTuple
 
@@ -41,46 +42,74 @@ def safe_convert(image, mode) -> Image.Image:
     return image.convert(mode)
 
 
-def _open_checked(path) -> Image.Image:
-    """Open `path`, enforce the file-size and pixel-count caps against the
-    header before decoding, and return the loaded Pillow image (still in its
-    original mode, possibly multi-frame). Raises ImageError on anything it
-    refuses to scan."""
-    path = Path(path)
-    try:
-        size = path.stat().st_size
-    except OSError as e:
-        raise ImageError(f"cannot read {path}: {e}") from e
+def read_capped(stream, name="<stdin>") -> bytes:
+    """Read an image from a binary stream, never more than MAX_FILE_BYTES + 1
+    bytes of it, so an endless pipe can't fill memory before the cap check."""
+    chunks = []
+    total = 0
+    while total <= MAX_FILE_BYTES:
+        chunk = stream.read(MAX_FILE_BYTES + 1 - total)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    if total > MAX_FILE_BYTES:
+        raise ImageError(
+            f"{name}: more than the {MAX_FILE_BYTES / 1_048_576:.0f} MB cap"
+        )
+    return b"".join(chunks)
+
+
+def _open_checked(source, name=None) -> Image.Image:
+    """Open `source`, a path or the file's bytes, enforce the file-size and
+    pixel-count caps against the header before decoding, and return the loaded
+    Pillow image (still in its original mode, possibly multi-frame). `name`
+    labels bytes in error messages. Raises ImageError on anything it refuses
+    to scan."""
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        label = name or "<bytes>"
+        size = len(source)
+        fp = io.BytesIO(source)
+    else:
+        fp = label = Path(source)
+        try:
+            size = fp.stat().st_size
+        except OSError as e:
+            raise ImageError(f"cannot read {label}: {e}") from e
     if size > MAX_FILE_BYTES:
         raise ImageError(
-            f"{path}: {size / 1_048_576:.1f} MB exceeds the "
+            f"{label}: {size / 1_048_576:.1f} MB exceeds the "
             f"{MAX_FILE_BYTES / 1_048_576:.0f} MB cap"
         )
 
     try:
-        img = Image.open(path)
+        img = Image.open(fp)
         width, height = img.size
         pixels = width * height
         if pixels > MAX_PIXELS:
             raise ImageError(
-                f"{path}: {width}x{height} ({pixels:,} px) exceeds the "
+                f"{label}: {width}x{height} ({pixels:,} px) exceeds the "
                 f"{MAX_PIXELS:,} px cap"
             )
         img.load()
         return img
     except ImageError:
         raise
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as e:
-        raise ImageError(f"{path}: not a readable image ({e})") from e
+    except UnidentifiedImageError as e:
+        # Pillow's own message names the file object, a BytesIO repr for bytes.
+        raise ImageError(f"{label}: not a readable image (cannot identify image file)") from e
+    except (OSError, ValueError, Image.DecompressionBombError) as e:
+        raise ImageError(f"{label}: not a readable image ({e})") from e
 
 
-def load_image(path) -> Image.Image:
-    """Load `path` as an RGB Pillow image (its first frame), or raise
-    ImageError with a message safe to print directly. Dimensions are checked
+def load_image(source, name=None) -> Image.Image:
+    """Load `source` (a path or bytes) as an RGB Pillow image (its first
+    frame), or raise ImageError with a message safe to print directly.
+    Dimensions are checked
     against the header before the pixel data is decoded, so an oversized image
     never gets fully loaded into memory just to be rejected. Pixels only: the
     file's info dict is left behind, for the reason load() gives."""
-    rgb = safe_convert(_open_checked(path), "RGB")
+    rgb = safe_convert(_open_checked(source, name), "RGB")
     rgb.info = {}
     return rgb
 
@@ -91,8 +120,9 @@ class Loaded(NamedTuple):
     truncated: bool = False  # the file has frames past MAX_FRAMES
 
 
-def load(path) -> Loaded:
-    """Decode `path` into its frames, up to MAX_FRAMES, and its metadata.
+def load(source, name=None) -> Loaded:
+    """Decode `source`, a path or the file's bytes, into its frames, up to
+    MAX_FRAMES, and its metadata.
 
     Animated GIFs and multi-page TIFFs carry a payload just as easily in frame
     2 as in frame 1, so a scan that only ever looked at the first frame would
@@ -105,7 +135,7 @@ def load(path) -> Loaded:
     the sender named, and Pillow trusts some names: a chunk called
     "transparency" or "icc_profile" makes convert() or a PNG save raise. Kept
     apart, nothing that touches the pixels ever reads those values."""
-    img = _open_checked(path)
+    img = _open_checked(source, name)
     metadata = Image.new("1", (1, 1))
     metadata.info = dict(img.info)
     frames = []
