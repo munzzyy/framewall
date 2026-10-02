@@ -333,6 +333,34 @@ def test_missing_framewall_is_shown_to_the_user(tmp_path, monkeypatch):
     assert "not installed" in message["systemMessage"]
 
 
+@POSIX_ONLY
+@pytest.mark.parametrize("fail, decision", [(None, "ask"), ("closed", "deny")])
+def test_a_broken_pillow_is_not_mistaken_for_a_missing_framewall(fail, decision, tmp_path):
+    # framewall imports but Pillow doesn't, and no framewall script is on
+    # PATH. The scan then fails with no verdict, which asks or denies; only a
+    # framewall that won't import at all may let the read through.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for tool in ("bash", "cat", "python3", "tr", "mktemp", "rm", "cut", "sed", "timeout"):
+        found = shutil.which(tool)
+        assert found or tool == "timeout", f"{tool} is needed to run the guard"
+        if found:
+            (bindir / tool).symlink_to(found)
+    broken = tmp_path / "broken" / "PIL"
+    broken.mkdir(parents=True)
+    (broken / "__init__.py").write_text("raise ImportError('broken Pillow')\n")
+    env = dict(os.environ, PATH=str(bindir), PYTHONPATH=f"{broken.parent}{os.pathsep}{REPO}")
+    env.pop("FRAMEWALL_GUARD_FAIL", None)
+    if fail:
+        env["FRAMEWALL_GUARD_FAIL"] = fail
+    r = subprocess.run(
+        [str(HOOK)], input=json.dumps(_read(POISONED)), capture_output=True,
+        text=True, env=env, cwd=tmp_path,
+    )
+    assert r.returncode == 0
+    assert _decision(r.stdout)["permissionDecision"] == decision
+
+
 def test_framewall_guard_runs_from_the_cli(monkeypatch, tmp_path):
     # The subcommand end to end in a child process, the way Claude Code runs it.
     env = dict(os.environ, PYTHONPATH=str(REPO))
