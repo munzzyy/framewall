@@ -64,10 +64,11 @@ def read_capped(stream, name="<stdin>") -> bytes:
     return b"".join(chunks)
 
 
-def _open_checked(source, name=None) -> Image.Image:
+def _open_checked(source, name=None) -> tuple:
     """Open `source`, a path or the file's bytes, enforce the file-size and
     pixel-count caps against the header before decoding, and return the loaded
-    Pillow image (still in its original mode, possibly multi-frame). `name`
+    Pillow image (still in its original mode, possibly multi-frame) with the
+    turn Pillow applied to its first frame while loading it, or None. `name`
     labels bytes in error messages. Raises ImageError on anything it refuses
     to scan."""
     in_memory = isinstance(source, (bytes, bytearray, memoryview))
@@ -97,8 +98,9 @@ def _open_checked(source, name=None) -> Image.Image:
                 f"{label}: {width}x{height} ({pixels:,} px) exceeds the "
                 f"{MAX_PIXELS:,} px cap"
             )
+        turned = _turned_by_pillow(img)
         img.load()
-        return img
+        return img, turned
     except ImageError:
         raise
     except UnidentifiedImageError as e:
@@ -115,7 +117,7 @@ def load_image(source, name=None) -> Image.Image:
     against the header before the pixel data is decoded, so an oversized image
     never gets fully loaded into memory just to be rejected. Pixels only: the
     file's info dict is left behind, for the reason load() gives."""
-    rgb = safe_convert(_open_checked(source, name), "RGB")
+    rgb = safe_convert(_open_checked(source, name)[0], "RGB")
     rgb.info = {}
     return rgb
 
@@ -133,6 +135,13 @@ _UPRIGHT = {
 }
 
 
+# Every transpose above undoes itself except the quarter turns, which undo
+# each other.
+_UNDO = {turn: turn for turn in _UPRIGHT.values()}
+_UNDO[Image.Transpose.ROTATE_90] = Image.Transpose.ROTATE_270
+_UNDO[Image.Transpose.ROTATE_270] = Image.Transpose.ROTATE_90
+
+
 def _upright_transpose(frame):
     """The transpose an EXIF-aware viewer applies to `frame`, or None. A tag
     Pillow can't parse counts as no tag; the stored pixels get scanned anyway."""
@@ -140,6 +149,12 @@ def _upright_transpose(frame):
         return _UPRIGHT.get(frame.getexif().get(0x0112))
     except Exception:
         return None
+
+
+def _turned_by_pillow(frame):
+    """The turn Pillow applies to `frame` itself when it loads, read before
+    the load: the TIFF loader runs exif_transpose and then drops the tag."""
+    return _upright_transpose(frame) if frame.format == "TIFF" else None
 
 
 class Loaded(NamedTuple):
@@ -171,7 +186,7 @@ def load(source, name=None) -> Loaded:
     pixels as stored come back too, in `as_stored`: a pipeline that ignores
     the tag hands those to the model instead, and the scan has to cover
     both."""
-    img = _open_checked(source, name)
+    img, turned = _open_checked(source, name)
     metadata = Image.new("1", (1, 1))
     metadata.info = dict(img.info)
     frames = []
@@ -179,11 +194,15 @@ def load(source, name=None) -> Loaded:
     for index, frame in enumerate(ImageSequence.Iterator(img)):
         if index >= MAX_FRAMES:
             return Loaded(frames, metadata, True, as_stored)
+        if index > 0:
+            turned = _turned_by_pillow(frame)
         rgb = safe_convert(frame, "RGB")
         rgb.info = {}
         turn = _upright_transpose(frame)
         if turn is not None:
             as_stored[index] = rgb
             rgb = rgb.transpose(turn)
+        elif turned is not None:
+            as_stored[index] = rgb.transpose(_UNDO[turned])
         frames.append((index, rgb))
     return Loaded(frames, metadata, False, as_stored)

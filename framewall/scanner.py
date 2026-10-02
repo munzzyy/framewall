@@ -111,7 +111,7 @@ def _scan(source, label, use_ocr, ocr_timeout, max_seconds, lang) -> ImageResult
 def _scan_as_stored(image, use_ocr, ocr_timeout, budget, lang):
     """The second look at a frame EXIF orientation turned: its pixels as
     stored, what a pipeline that ignores the tag shows the model. Only the
-    checks that depend on which way the text runs are kept; the pixel-shape
+    checks that care which way the text runs look at it; the pixel-shape
     ones already ran on the same pixels turned."""
     if budget.exhausted():
         budget.note(
@@ -119,7 +119,7 @@ def _scan_as_stored(image, use_ocr, ocr_timeout, budget, lang):
             "without their EXIF orientation; the scan is partial"
         )
         return [], ""
-    found, skipped = _scan_frame(image, use_ocr, ocr_timeout, budget, lang)
+    found, skipped = _scan_frame(image, use_ocr, ocr_timeout, budget, lang, shape_checks=False)
     kept = [
         dataclasses.replace(f, detail=f"[as stored, before EXIF orientation] {f.detail}")
         for f in found
@@ -128,16 +128,20 @@ def _scan_as_stored(image, use_ocr, ocr_timeout, budget, lang):
     return kept, skipped
 
 
-def _scan_frame(image, use_ocr: bool, ocr_timeout, budget, lang):
+def _scan_frame(image, use_ocr: bool, ocr_timeout, budget, lang, shape_checks=True):
     """Returns (findings, skipped): skipped is "" when the OCR passes ran on
-    this frame, otherwise why they didn't."""
+    this frame, otherwise why they didn't. shape_checks=False leaves out
+    FW-002, FW-004 and FW-006, which don't care which way the frame is
+    turned."""
     gray = imageio.safe_convert(image, "L")
 
     findings = []
-    low_contrast_findings = contrast.find(gray)
-    findings.extend(low_contrast_findings)
-    findings.extend(overlay.find(gray))
-    findings.extend(hifreq.find(gray))
+    low_contrast_findings = None
+    if shape_checks:
+        low_contrast_findings = contrast.find(gray)
+        findings.extend(low_contrast_findings)
+        findings.extend(overlay.find(gray))
+        findings.extend(hifreq.find(gray))
     tiny_strips = tiny_text.find_heuristic(gray)
 
     if not use_ocr:
@@ -153,6 +157,8 @@ def _scan_frame(image, use_ocr: bool, ocr_timeout, budget, lang):
             f"the injection-text check did not run"
         )
 
+    if low_contrast_findings is None:
+        low_contrast_findings = contrast.find(gray)  # OCR reads these regions on their own
     try:
         low_contrast_regions = [f.region for f in low_contrast_findings if f.region]
         strip_regions = [

@@ -178,7 +178,7 @@ def test_injection_recall_across_pattern_families(tmp_path):
 def test_payload_stored_sideways_and_shown_level_by_exif_is_dangerous(tmp_path):
     """Browsers apply EXIF orientation, so this displays as a level line of
     text. Read in the stored grid, it is sideways."""
-    for ext in ("jpg", "png"):
+    for ext in ("jpg", "png", "tif"):
         p = _images.with_orientation(_images.sideways_injection(), tmp_path / f"side.{ext}", 6)
         result = scan_image(p)
         assert result.width == 1000
@@ -190,7 +190,8 @@ def test_payload_level_in_the_stored_pixels_survives_an_orientation_tag(tmp_path
     """The other way round: a pipeline that ignores the tag hands the model
     the stored pixels, which read level, while the turned view is upside
     down, mirrored or sideways."""
-    for orientation in (2, 3, 4, 6, 8):
-        p = _images.with_orientation(_images.upright_banner(), tmp_path / f"o{orientation}.png", orientation)
-        result = scan_image(p)
-        assert result.verdict == Verdict.DANGEROUS.value, (orientation, result.findings)
+    for ext in ("png", "tif"):
+        for orientation in (2, 3, 4, 6, 8):
+            p = _images.with_orientation(_images.upright_banner(), tmp_path / f"o{orientation}.{ext}", orientation)
+            result = scan_image(p)
+            assert result.verdict == Verdict.DANGEROUS.value, (ext, orientation, result.findings)

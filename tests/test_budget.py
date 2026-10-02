@@ -170,3 +170,16 @@ def test_a_spent_budget_skips_the_stored_view_out_loud(tmp_path):
     result = scan_image(p, use_ocr=False, max_seconds=1e-9)
     assert any("as stored" in note and "partial" in note for note in result.notes)
     assert scan_image(p, use_ocr=False).notes == []
+
+
+def test_the_stored_view_skips_the_pixel_shape_checks(tmp_path, monkeypatch):
+    from framewall.checks import contrast, hifreq, overlay
+
+    calls = []
+    for check in (contrast, overlay, hifreq):
+        monkeypatch.setattr(
+            check, "find", lambda *a, real=check.find, name=check.RULE_ID: calls.append(name) or real(*a)
+        )
+    p = _images.with_orientation(_images.clean_screenshot(), tmp_path / "turned.png", 6)
+    scan_image(p, use_ocr=False)
+    assert sorted(calls) == ["FW-002", "FW-004", "FW-006"]

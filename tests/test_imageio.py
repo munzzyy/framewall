@@ -211,11 +211,12 @@ def test_an_exif_turned_image_loads_the_way_a_viewer_shows_it(tmp_path):
     assert scan_image(p, use_ocr=False).width == 1000
 
 
+@pytest.mark.parametrize("ext", ["png", "tif"])
 @pytest.mark.parametrize("orientation", range(2, 9))
-def test_every_orientation_matches_pillows_exif_transpose(tmp_path, orientation):
+def test_every_orientation_matches_pillows_exif_transpose(tmp_path, orientation, ext):
     from PIL import ImageOps
 
-    p = tmp_path / f"o{orientation}.png"
+    p = tmp_path / f"o{orientation}.{ext}"
     stored = Image.new("RGB", (60, 40), "white")
     stored.paste((200, 30, 30), (0, 0, 20, 10))
     stored.paste((30, 30, 200), (50, 30, 60, 40))
@@ -225,6 +226,21 @@ def test_every_orientation_matches_pillows_exif_transpose(tmp_path, orientation)
     assert loaded.frames[0][1].tobytes() == expected.tobytes()
     assert loaded.frames[0][1].size == expected.size
     assert loaded.as_stored[0].tobytes() == stored.tobytes()
+
+
+def test_a_turned_multi_page_tiff_keeps_every_page_as_stored(tmp_path):
+    # Pillow's TIFF loader turns each page by its tag as it loads it, so the
+    # stored pixels have to be turned back.
+    p = tmp_path / "pages.tif"
+    pages = [Image.new("RGB", (60, 40), c) for c in ("white", "black")]
+    for page in pages:
+        page.paste((200, 30, 30), (0, 0, 20, 10))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    pages[0].save(p, save_all=True, append_images=pages[1:], exif=exif)
+    loaded = imageio.load(p)
+    assert [frame.size for _, frame in loaded.frames] == [(40, 60), (40, 60)]
+    assert [loaded.as_stored[i].tobytes() for i in (0, 1)] == [page.tobytes() for page in pages]
 
 
 def test_no_orientation_tag_keeps_the_pixels_and_no_second_view(tmp_path):

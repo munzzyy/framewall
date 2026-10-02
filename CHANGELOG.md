@@ -61,8 +61,8 @@ Not tagged yet. Installing from main gets this version.
 - Finding titles, details and `--quiet` paths are escaped the same way
   snippets are. A crafted key or file name cannot add lines to the report.
 - An image with an EXIF orientation tag is read the way a browser shows it
-  and again as stored. Text stored sideways under the tag used to come back
-  CLEAN. A recovery pass also reads text turned a quarter with no tag at all.
+  and again as stored. A recovery pass also reads text turned a quarter with
+  no tag at all.
 - Files are decoded only as one of the formats SECURITY.md lists. A file in
   any other format is refused whatever it is named. It no longer goes to
   whichever of Pillow's decoders matches its bytes.
