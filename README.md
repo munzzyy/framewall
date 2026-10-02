@@ -460,11 +460,9 @@ approach with (not the code - `examples/` is deliberately standalone).
 What is left needs someone other than this repo's code: a release, a
 decision, an outside reviewer or a native speaker.
 
-- A tagged 0.2.0 release and a PyPI package. The only tag, v0.1.0, predates
-  the OCR time budget, `framewall doctor`, `framewall guard` and every fix in
-  [CHANGELOG.md](CHANGELOG.md), and the PyPI name isn't claimed yet. Until
-  then, install from the repo as [Install](#install) shows and pin a commit
-  in CI.
+- A PyPI package. The name isn't claimed yet, and claiming it with a trusted
+  publisher is a setting behind the maintainer's login. Until then, install
+  from the repo as [Install](#install) shows; the v0.2.0 tag is what to pin.
 - A decision on FW-001's broadest phrasing. "You are now ...", "New task:
   ..." and a `System:` label catch real payloads, and they also match
   ordinary copy like "System: Online" or "New task: Review PR #42", which

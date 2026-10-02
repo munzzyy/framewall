@@ -1,8 +1,6 @@
 # Changelog
 
-## 0.2.0 - unreleased
-
-Not tagged yet. Installing from main gets this version.
+## 0.2.0 - 2026-10-02
 
 ### Added
 
